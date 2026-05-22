@@ -3257,6 +3257,20 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                             )
                         }
                     }
+                } else if (action == "android.bluetooth.a2dp.profile.action.PLAYING_STATE_CHANGED") {
+                    val playingState = intent.getIntExtra("android.bluetooth.profile.extra.STATE", -1)
+                    val savedMac = context?.getSharedPreferences("settings", MODE_PRIVATE)
+                        ?.getString("mac_address", null)
+                    if (savedMac != null && bluetoothDevice.address == savedMac) {
+                        Log.d(TAG, "A2DP playing state changed for AirPods (${bluetoothDevice.address}): state=$playingState (10=playing, 11=not playing)")
+                        if (playingState == 10) { // BluetoothA2dp.STATE_PLAYING
+                            // On some devices (Xiaomi) the A2DP audio stream starts many seconds
+                            // after the device is added. Restart the routeLandPoller so it can catch
+                            // app auto-pause triggered by the late route change.
+                            Log.d(TAG, "A2DP stream started — restarting routeLandPoller")
+                            io.nikos.propods.utils.MediaController.restartRouteLandPoller()
+                        }
+                    }
                 }
             }
         }
@@ -3475,6 +3489,16 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                 Log.d(TAG, "BLE-only mode: showing connecting status without L2CAP connection")
                 updateNotificationContent(true, config.deviceName, batteryNotification.getBattery())
             } else {
+                // Ask the peer (if any) to release the AirPods before we try to
+                // connect. Without this, a device holding the A2DP link (Pixel)
+                // never learns it should pause and drop — our connect() silently
+                // no-ops on limited-mode devices that can't force a takeover.
+                if (CrossDevice.isPeerConnected) {
+                    Log.d(TAG, "takeOver: sending REQUEST_DISCONNECT to peer")
+                    CrossDevice.sendRemotePacket(CrossDevicePackets.REQUEST_DISCONNECT.packet)
+                    CrossDeviceClient.send(CrossDevicePackets.REQUEST_DISCONNECT.packet)
+                }
+
                 Log.d(TAG, "takeOver: calling connectAudio()")
                 if (takingOverFor == "music" && macAddress.isNotEmpty()) {
                     MediaController.armPendingMusicTakeover(macAddress)
