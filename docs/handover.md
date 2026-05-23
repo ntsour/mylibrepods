@@ -241,14 +241,22 @@ Source is limited-mode. Destination has AACP but no `BLUETOOTH_PRIVILEGED`.
 
 1. Destination: `takeOver("music")`.
 2. Destination: sends `REQUEST_DISCONNECT`.
-3. Source receives it → `disconnectForCD()`:
+3. Source receives it → `disconnectForCD()` (now runs fully on limited-mode
+   peers, see "Limited-mode `disconnectForCD()`" below):
    - no L2CAP to close
-   - `setConnectionPolicy(device, 0)` only (hint, not a hard cut)
+   - `MediaController.sendPause()` dispatched **synchronously** (before the
+     A2DP proxy callback) — local podcast pauses within milliseconds
+   - shows the "moved to remote" island if battery info is available
+   - `setConnectionPolicy(device, 0)` (hint only, no privilege to force cut)
+   - `notifyDisconnected()` sent over RFCOMM
 4. Destination: `connectAudio()` — unprivileged `connect()`. On OEM stacks this
    displaces the source even without the privilege. Source sees `ACL_DISCONNECTED`
    passively when AirPods drop it.
-5. Source: `sendPause()` runs if music was active; destination RouteLandPoller
-   handles playback resume.
+5. Destination announces ownership via `AIRPODS_CONNECTED` once A2DP profile
+   state reaches `STATE_CONNECTED` (the AACP path also sends it on AACP_ACK).
+   The source's `confirmPeerOwnership()` arms the peer-drop cooldown
+   proactively without waiting for ACL_DISCONNECTED.
+6. Destination RouteLandPoller handles playback resume.
 
 **Peer out of BT range**
 
@@ -291,6 +299,81 @@ Neither device has `BLUETOOTH_PRIVILEGED`.
 
 ---
 
+### Limited-mode `disconnectForCD()`
+
+When a source receives `REQUEST_DISCONNECT` from the peer, `disconnectForCD()`
+in `AirPodsService.kt` runs the following actions in order. It runs to completion
+regardless of whether the AACP L2CAP socket is open (limited-mode peers do not
+have one — the previous `socket.isInitialized` early-return made the whole
+function a silent no-op on those devices, so podcasts kept playing into the
+void for 3+ seconds until the AirPods physically left):
+
+1. If an AACP L2CAP socket is open → close it.
+2. Show "MOVED_TO_REMOTE" island (only if battery levels are known —
+   limited-mode devices skip this when no battery packet has been parsed).
+3. **`MediaController.sendPause()` dispatched synchronously.** This is now done
+   outside the A2DP proxy callback so it fires immediately, not after the
+   proxy attaches. Local audio pauses within milliseconds of the packet arriving.
+4. Request the A2DP profile proxy. Inside the callback: if `BLUETOOTH_PRIVILEGED`
+   is held, call `BluetoothA2dp.disconnect()` via reflection; otherwise log and
+   skip (the AirPods will drop us when the destination's `connect()` wins).
+5. Set `CrossDevice.isAvailable = true` and call `notifyDisconnected()`
+   broadcasting `AIRPODS_DISCONNECTED` to all peers.
+
+The `markPeerTakeoverAttempt()` call (made by the packet handler *before*
+`disconnectForCD()`) sets `expectingPeerTakeover = true` and starts the 15 s
+ceiling timer.
+
+---
+
+### Destination ownership announcement
+
+A destination that just took the AirPods announces ownership over RFCOMM via
+`CrossDevice.notifyConnected()`, which sends `AIRPODS_CONNECTED` to all peers.
+Two trigger points:
+
+1. **AACP destinations** — fire after a successful AACP handshake (`AACP_ACK`
+   received). This is the historical path.
+2. **Limited-mode destinations** — fire when the A2DP profile state for the
+   AirPods MAC transitions to `STATE_CONNECTED`, gated on
+   `CrossDevice.isAvailable == true` (to debounce when the AACP path already
+   announced). Without this, a limited-mode taker would never send
+   `AIRPODS_CONNECTED` to the peer and the peer's `confirmPeerOwnership()`
+   proactive cooldown path would be inert in that direction.
+
+---
+
+### MediaController stale-state resets
+
+Two state variables in `MediaController.kt` would otherwise persist incorrectly
+across a peer takeover and break the "user comes back later and presses play"
+flow.
+
+**`iPausedTheMedia`.** Set to `true` by `sendPause()` regardless of who paused.
+When the source yielded the AirPods for a call, this flag was set — and stayed
+set forever after, because nothing in the normal play flow cleared it. When the
+user later took the AirPods back, `onAudioDevicesAdded` hit the
+"route landed but iPausedTheMedia=true; user paused intentionally, NOT replaying"
+branch and suppressed the auto-replay. Now `armPendingMusicTakeover(mac)`
+clears this flag — by definition arming a music takeover means the user has
+requested playback, so any prior "we paused" state is stale.
+
+**`lastKnownIsMusicActive`.** An edge-trigger used to decide whether to fire
+`takeOver("music")` from `onPlaybackConfigChanged`. When the AirPods autonomously
+left us (Apple auto-switch, OS reconnect) no playback callback fired with
+`isActive=false`, so the flag stayed `true`. The next play press hit the
+HyperOS quirk path (`Media config seen but isMusicActive=false`) but the
+delayed 500 ms re-check was gated by `lastKnownIsMusicActive != true` — the
+gate suppressed it and no takeover fired. Two fixes:
+1. New `MediaController.resetMusicActiveState()` is called from the
+   ACL_DISCONNECTED-for-AirPods handler in `AirPodsService.kt`, clearing the
+   stale flag whenever the AirPods leave us for any reason.
+2. The `lastKnownIsMusicActive != true` clause was removed from the delayed
+   re-check's outer gate. The inner `audioManager.isMusicActive` check at
+   +500 ms is the authoritative source of truth.
+
+---
+
 ### RouteLandPoller Lifecycle
 
 ```
@@ -321,9 +404,24 @@ can auto-pause 3–4 s after the stream starts — well past any short "looks st
 - **Keep-alive**: server (`CrossDevice.kt`) and client (`CrossDeviceClient.kt`) each
   send `REQUEST_CONNECTION_STATUS` every 20 s to prevent Android's BT power manager
   from dropping the ACL between handovers.
-- **Peer-drop cooldown**: after yielding the AirPods, `peerDropCooldownUntilMs` is set
-  to `now + 10 s`. The BLE reconnect path is blocked during this window so the new
-  owner can finish establishing AACP without the source fighting back.
+- **Peer-drop cooldown**: after yielding the AirPods, `peerDropCooldownUntilMs` is
+  set to `now + 10 s`. The BLE reconnect path is blocked during this window so the
+  new owner can finish establishing AACP without the source fighting back.
+
+  **Event-based arming.** The cooldown is no longer keyed off a time window
+  (`now < peerRequestedDisconnectMs + 6_000L`). Instead, an `expectingPeerTakeover`
+  flag is set on receiving `REQUEST_DISCONNECT`/`REQUEST_HANDOVER` and cleared by:
+  1. ACL_DISCONNECTED for the AirPods (we observed the AirPods leave us),
+  2. inbound `AIRPODS_CONNECTED` packet from the peer (peer confirmed takeover —
+     handled by `confirmPeerOwnership()`, arms the cooldown proactively without
+     waiting for ACL_DISCONNECTED),
+  3. a 15 s ceiling safety net (handover silently failed),
+  4. user-initiated manual reconnect.
+
+  This eliminates two prior failure modes: slow takeovers (cold-connect or
+  unprivileged-`connect()` retries landing past the old 6 s window) and false
+  positives (case close / range loss within the window misclassified as peer
+  takeover).
 
 **RFCOMM down ≠ AirPods disconnected.** The RFCOMM channel and the AirPods A2DP
 link are independent. It is common for the phones to lose their RFCOMM connection
@@ -397,6 +495,18 @@ target audience for this app.
    4.5 s) covers most timing windows but is not guaranteed if the source is very slow
    to release.
 
-5. **No explicit handover acknowledgement** — the destination never confirms to the
-   source "I have the AirPods now." The source infers it from `ACL_DISCONNECTED` +
-   `AUDIO_BECOMING_NOISY` rather than a protocol-level confirmation.
+5. **No return-to-source after a call.** When a call on the source device pulls
+   the AirPods from a peer and the call ends, there is no mechanism to hand the
+   AirPods back. The peer's podcast stays paused; the user must press play on
+   the peer to trigger a fresh `takeOver`. The post-call `CALL_STATE_IDLE`
+   handler stops gesture detection but doesn't initiate a reverse handover.
+
+6. **AirPods auto-switching back to source.** Apple AirPods have iCloud-driven
+   "fast device switching" that autonomously moves the connection to a recently
+   active paired device based on accelerometer / screen wake / audio session
+   signals. Observed in testing: ~13 s after a Pixel→Xiaomi handover, the
+   AirPods autonomously left Xiaomi and reconnected to Pixel without any
+   takeover request from Pixel. This is OS+AirPods behaviour, not something
+   the app can suppress directly. The event-based `expectingPeerTakeover` flag
+   correctly identifies these as non-peer-takeover drops (no false-positive
+   cooldown), but the audio still leaves the destination.
