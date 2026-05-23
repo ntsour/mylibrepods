@@ -29,7 +29,10 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -205,6 +208,7 @@ fun ConnectionSettings(
     onAutomaticEarDetectionChanged: (Boolean) -> Unit,
     automaticConnectionEnabled: Boolean,
     onAutomaticConnectionChanged: (Boolean) -> Unit,
+    earDetectionAvailable: Boolean = true,
 ) {
     val isDarkTheme = isSystemInDarkTheme()
     val backgroundColor = if (isDarkTheme) Color(0xFF1C1C1E) else Color(0xFFFFFFFF)
@@ -352,12 +356,32 @@ fun ConnectionSettings(
                 .padding(horizontal = 12.dp)
         )
 
-        StyledToggle(
-            label = stringResource(R.string.ear_detection),
-            independent = false,
-            checked = automaticEarDetectionEnabled,
-            onCheckedChange = onAutomaticEarDetectionChanged
-        )
+        if (earDetectionAvailable) {
+            StyledToggle(
+                label = stringResource(R.string.ear_detection),
+                independent = false,
+                checked = automaticEarDetectionEnabled,
+                onCheckedChange = onAutomaticEarDetectionChanged
+            )
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Box(modifier = Modifier.weight(1f).alpha(0.4f)) {
+                    StyledToggle(
+                        label = stringResource(R.string.ear_detection),
+                        independent = false,
+                        checked = automaticEarDetectionEnabled,
+                        onCheckedChange = { /* no-op: AACP not available */ },
+                        enabled = false
+                    )
+                }
+                io.nikos.propods.presentation.components.RequiresAacpIcon()
+                Spacer(Modifier.width(12.dp))
+            }
+        }
         HorizontalDivider(
             thickness = 1.dp,
             color = Color(0x40888888),

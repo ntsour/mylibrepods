@@ -18,25 +18,19 @@
 
 package io.nikos.propods.utils
 
-import android.content.SharedPreferences
 import android.os.Build
 
-fun isSupported(sharedPreferences: SharedPreferences): Boolean {
+// Returns true when the device can in principle open the AACP L2CAP socket to the
+// AirPods. False means the device runs the same UI but every AACP-controlled
+// feature is greyed out (battery, handover, BLE-based features still work).
+fun isAacpCapable(): Boolean {
     val isPixel = Build.MANUFACTURER.lowercase() == "google"
     val isOppoOrOnePlus = Build.MANUFACTURER.lowercase() in listOf("oneplus", "oppo")
-    val isBypassFlagActive = sharedPreferences.getBoolean("bypass_device_check.v2", false)
-
-    if (isBypassFlagActive) return true
 
     if (isPixel) {
         when (Build.VERSION.SDK_INT) {
-            36 -> {
-                return Build.ID == "CP1A.260305.018" || Build.ID == "CP1A.260405.005"
-            }
-
-            37 -> {
-                return true
-            }
+            36 -> return Build.ID == "CP1A.260305.018" || Build.ID == "CP1A.260405.005"
+            37 -> return true
         }
     } else if (isOppoOrOnePlus) {
         return Build.VERSION.SDK_INT >= 36

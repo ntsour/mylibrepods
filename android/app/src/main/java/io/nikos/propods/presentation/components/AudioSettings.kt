@@ -64,8 +64,10 @@ fun AudioSettings(
     onLoudSoundReductionCheckedChange: (Boolean) -> Unit,
 
     vendorIdHook: Boolean,
-    isPremium: Boolean
+    isPremium: Boolean,
+    aacpAvailable: Boolean = true
 ) {
+    val effectiveEnabled = isPremium && aacpAvailable
     val isDarkTheme = isSystemInDarkTheme()
     val textColor = if (isDarkTheme) Color.White else Color.Black
 
@@ -105,7 +107,7 @@ fun AudioSettings(
                 independent = false,
                 checked = adaptiveVolumeChecked,
                 onCheckedChange = onAdaptiveVolumeCheckedChange,
-                enabled = isPremium
+                enabled = effectiveEnabled
             )
 
             HorizontalDivider(
@@ -123,7 +125,7 @@ fun AudioSettings(
                 independent = false,
                 checked = conversationalAwarenessChecked,
                 onCheckedChange = onConversationalAwarenessCheckedChange,
-                enabled = isPremium
+                enabled = effectiveEnabled
             )
             HorizontalDivider(
                 thickness = 1.dp,
@@ -140,7 +142,7 @@ fun AudioSettings(
                 independent = false,
                 checked = loudSoundReductionChecked,
                 onCheckedChange = onLoudSoundReductionCheckedChange,
-                enabled = isPremium
+                enabled = effectiveEnabled
             )
             HorizontalDivider(
                 thickness = 1.dp,

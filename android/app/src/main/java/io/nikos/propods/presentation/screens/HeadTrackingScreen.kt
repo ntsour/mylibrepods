@@ -204,7 +204,7 @@ fun HeadTrackingScreen(
                     label = "Head gestures",
                     checked = state.headGesturesEnabled,
                     onCheckedChange = { viewModel.setHeadGesturesEnabled(it) },
-                    enabled = state.isPremium || state.headGesturesEnabled,
+                    enabled = (state.isPremium || state.headGesturesEnabled) && state.aacpAvailable,
                     description = "Master switch for all head gesture features."
                 )
 
@@ -212,7 +212,7 @@ fun HeadTrackingScreen(
                     label = "Answer/decline incoming calls",
                     checked = state.headGesturesAnswerCall,
                     onCheckedChange = { viewModel.setHeadGesturesAnswerCall(it) },
-                    enabled = state.headGesturesEnabled && (state.isPremium || state.headGesturesAnswerCall),
+                    enabled = state.headGesturesEnabled && (state.isPremium || state.headGesturesAnswerCall) && state.aacpAvailable,
                     description = "Nod to answer an incoming call, shake your head to decline."
                 )
 
@@ -220,7 +220,7 @@ fun HeadTrackingScreen(
                     label = "Mute/unmute during a call",
                     checked = state.headGesturesMuteCall,
                     onCheckedChange = { viewModel.setHeadGesturesMuteCall(it) },
-                    enabled = state.headGesturesEnabled && (state.isPremium || state.headGesturesMuteCall),
+                    enabled = state.headGesturesEnabled && (state.isPremium || state.headGesturesMuteCall) && state.aacpAvailable,
                     description = "Shake your head during an active call to mute the mic, nod to unmute."
                 )
 
