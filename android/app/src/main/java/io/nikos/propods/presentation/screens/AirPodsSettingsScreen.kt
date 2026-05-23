@@ -618,7 +618,7 @@ private fun ConnectedScreen(
         val airpodsNearby = state.battery.isNotEmpty()
         val (statusText, statusDot) = when {
             audioHere -> "Connected — audio routed here" to Color(0xFF34C759)
-            airpodsNearby -> "AirPods on another device" to Color(0xFFFF9500)
+            airpodsNearby -> "AirPods on another device or in the case" to Color(0xFFFF9500)
             else -> "AirPods not nearby" to Color(0xFF8E8E93)
         }
         Row(
