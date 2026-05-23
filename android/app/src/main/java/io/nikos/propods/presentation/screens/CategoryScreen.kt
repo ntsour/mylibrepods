@@ -1013,6 +1013,82 @@ private fun AppSettingsContent(
             }
         }
         MenuDivider()
+        // ── Background activity / battery optimization ───────────────────────
+        // When the system applies battery optimization to ProPods, the foreground
+        // service can be delayed or killed — handover, BLE proximity, and the boot
+        // autostart all become unreliable. Surface the current state and a button
+        // to open the system dialog. Same standard API works on Pixel/AOSP and
+        // every OEM (Xiaomi, OnePlus, etc.).
+        MenuSectionHeader("Background Activity", dark)
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            val pm = remember { context.getSystemService(android.os.PowerManager::class.java) }
+            // Re-evaluate every time the screen recomposes (user may have changed it).
+            var unrestricted by remember { mutableStateOf(pm?.isIgnoringBatteryOptimizations(context.packageName) == true) }
+            // Refresh whenever the user returns from the settings dialog.
+            val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+            DisposableEffect(lifecycleOwner) {
+                val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                    if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                        unrestricted = pm?.isIgnoringBatteryOptimizations(context.packageName) == true
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+            }
+            Text(
+                if (unrestricted) "✅ Unrestricted — service runs reliably"
+                else "⚠ Battery optimization is active",
+                style = TextStyle(
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    fontFamily = SfPro,
+                    color = if (unrestricted) Color(0xFF34C759)
+                            else Color(0xFFFF9500)
+                )
+            )
+            Text(
+                if (unrestricted)
+                    "ProPods is allowed to run in the background. Handover, " +
+                    "BLE proximity, and boot autostart will work."
+                else
+                    "The system may kill the ProPods service to save battery. " +
+                    "Handover may miss events, and ProPods may not autostart on boot. " +
+                    "Tap below to set it to Unrestricted.",
+                style = captionStyle(dark)
+            )
+            if (!unrestricted) {
+                StyledButton(
+                    onClick = {
+                        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                            data = "package:${context.packageName}".toUri()
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        runCatching { context.startActivity(intent) }.onFailure {
+                            // Fallback: open the general battery-optimization list
+                            runCatching {
+                                context.startActivity(
+                                    Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                )
+                            }
+                        }
+                    },
+                    backdrop = rememberLayerBackdrop(),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp)
+                ) {
+                    Text(
+                        "Allow unrestricted background activity",
+                        style = TextStyle(
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                            fontFamily = SfPro,
+                            color = if (dark) Color.White else Color.Black
+                        )
+                    )
+                }
+            }
+        }
+        MenuDivider()
         MenuNavRow("Permissions", dark) { navController.navigate("permissions") }
     }
 }
