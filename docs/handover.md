@@ -58,6 +58,22 @@ to manually disconnect on the source phone.
 
 ---
 
+**What if the phones lose their background connection but the AirPods are still playing?**
+
+The background connection between the two phones (the RFCOMM channel) and the AirPods
+audio connection are completely separate Bluetooth links. It is perfectly normal for
+the phones to lose their connection to each other — because they drifted apart, one
+was restarted, or Android killed the background service — while the AirPods keep
+playing fine on whichever phone had them.
+
+When you then press play on the other phone, step 2 ("hand them over") is skipped
+silently because the background channel is down. The destination phone just reaches
+out to the AirPods directly (step 4) without warning the source first. The AirPods
+switch over normally — but the source phone's audio cuts abruptly instead of being
+paused gracefully beforehand.
+
+---
+
 ## Technical Reference
 
 ### Device Capability Tiers
@@ -308,6 +324,15 @@ can auto-pause 3–4 s after the stream starts — well past any short "looks st
 - **Peer-drop cooldown**: after yielding the AirPods, `peerDropCooldownUntilMs` is set
   to `now + 10 s`. The BLE reconnect path is blocked during this window so the new
   owner can finish establishing AACP without the source fighting back.
+
+**RFCOMM down ≠ AirPods disconnected.** The RFCOMM channel and the AirPods A2DP
+link are independent. It is common for the phones to lose their RFCOMM connection
+(range, service restart, BT power management) while the AirPods continue playing on
+the source. When this happens and the destination calls `takeOver()`, the
+`REQUEST_DISCONNECT` packet is silently dropped and the handover falls through to the
+same unprivileged `connect()` path as the out-of-range case. On OEM stacks this
+still succeeds — the difference is that the source never receives `sendPause()`, so
+its audio cuts abruptly rather than being paused first.
 
 ---
 
