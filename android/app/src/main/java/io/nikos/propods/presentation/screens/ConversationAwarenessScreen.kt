@@ -43,7 +43,8 @@ fun ConversationAwarenessScreen(
     val convoEnabled = state.controlStates[
         AACPManager.Companion.ControlCommandIdentifiers.CONVERSATION_DETECT_CONFIG
     ]?.getOrNull(0) == 0x01.toByte()
-    val subEnabled = convoEnabled && appState.isPremium
+    val masterEnabled = appState.isPremium && state.aacpAvailable
+    val subEnabled = convoEnabled && masterEnabled
 
     StyledScaffold(title = "Conversation Awareness") { topPadding, hazeState, bottomPadding ->
         Column(
@@ -60,14 +61,14 @@ fun ConversationAwarenessScreen(
                 StyledToggle(
                     label = stringResource(R.string.conversational_awareness),
                     description = stringResource(R.string.conversational_awareness_master_description),
-                    checked = convoEnabled && appState.isPremium,
+                    checked = convoEnabled && masterEnabled,
                     onCheckedChange = {
                         viewModel.setControlCommandBoolean(
                             AACPManager.Companion.ControlCommandIdentifiers.CONVERSATION_DETECT_CONFIG, it
                         )
                     },
                     independent = true,
-                    enabled = appState.isPremium,
+                    enabled = masterEnabled,
                 )
                 Spacer(Modifier.height(12.dp))
                 StyledToggle(label = stringResource(R.string.conversational_awareness_pause_music),

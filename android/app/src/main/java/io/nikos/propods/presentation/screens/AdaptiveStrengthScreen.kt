@@ -21,6 +21,7 @@ package io.nikos.propods.presentation.screens
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -121,8 +122,24 @@ fun AdaptiveStrengthScreen(viewModel: AirPodsViewModel, navController: NavContro
                 endIcon = "􀊩",
                 independent = true,
                 description = stringResource(R.string.adaptive_audio_description),
-                enabled = state.isPremium
+                enabled = state.isPremium && state.aacpAvailable
             )
+            if (!state.aacpAvailable) {
+                Row(
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    io.nikos.propods.presentation.components.RequiresAacpIcon()
+                    Text(
+                        text = "Adaptive Audio requires AACP support",
+                        style = TextStyle(
+                            fontSize = 13.sp,
+                            fontFamily = FontFamily(Font(R.font.sf_pro)),
+                            color = if (isSystemInDarkTheme()) Color.White.copy(0.6f) else Color.Black.copy(0.6f)
+                        )
+                    )
+                }
+            }
         }
     }
 }

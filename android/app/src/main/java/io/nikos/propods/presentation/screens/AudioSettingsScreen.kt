@@ -55,7 +55,8 @@ fun AudioSettingsScreen(
                 loudSoundReductionChecked = state.loudSoundReductionEnabled,
                 onLoudSoundReductionCheckedChange = { if (it) viewModel.setATTCharacteristicValue(io.nikos.propods.bluetooth.ATTHandles.LOUD_SOUND_REDUCTION, byteArrayOf(1)) else viewModel.setATTCharacteristicValue(io.nikos.propods.bluetooth.ATTHandles.LOUD_SOUND_REDUCTION, byteArrayOf(0)) },
                 vendorIdHook = state.vendorIdHook,
-                isPremium = state.isPremium
+                isPremium = state.isPremium,
+                aacpAvailable = state.aacpAvailable
             )
             
             Spacer(Modifier.height(bottomPadding))

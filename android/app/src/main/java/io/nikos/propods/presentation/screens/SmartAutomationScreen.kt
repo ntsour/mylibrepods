@@ -60,7 +60,7 @@ fun SmartAutomationScreen(viewModel: AirPodsViewModel) {
                     StyledToggle(label = "Sleep Detection",
                         checked = state.controlStates[id]?.getOrNull(0) == 0x01.toByte(),
                         onCheckedChange = { viewModel.setControlCommandBoolean(id, it) },
-                        independent = true, enabled = state.isPremium)
+                        independent = true, enabled = state.isPremium && state.aacpAvailable)
                     Spacer(Modifier.height(12.dp))
                 }
                 

@@ -43,9 +43,9 @@
     <string name="add_widget">新增小工具</string>
     <string name="noise_control_widget_description">直接從主畫面控制聽覺模式。</string>
     <string name="island_connected_text">已連線</string>
-    <string name="island_connected_remote_text">已連線至 Linux</string>
+    <string name="island_connected_remote_text">已連線至其他裝置</string>
     <string name="island_taking_over_text">已連線</string>
-    <string name="island_moved_to_remote_text">已移至 Linux</string>
+    <string name="island_moved_to_remote_text">已移至其他裝置</string>
     <string name="island_moved_to_other_device_text">已移至 %1$s</string>
     <string name="island_moved_to_other_device_reversed_text">從通知重新連線</string>
     <string name="head_tracking">頭部追蹤</string>

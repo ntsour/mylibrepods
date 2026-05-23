@@ -112,7 +112,13 @@ data class AirPodsUiState(
     // True when a previously-used AirPods MAC is saved — gates the manual
     // "reconnect to last device" button so it is available even when the
     // AACP connection has never succeeded.
-    val hasSavedDevice: Boolean = false
+    val hasSavedDevice: Boolean = false,
+
+    // True when the device can in principle open the AACP L2CAP socket
+    // (privileged Pixel build OR LSPosed hook active). UI uses this to grey
+    // out AACP-only controls on limited-mode devices while keeping the same
+    // navigation surface.
+    val aacpAvailable: Boolean = false
 )
 
 class AirPodsViewModel(
@@ -123,7 +129,9 @@ class AirPodsViewModel(
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(
         AirPodsUiState(
-            deviceName = preferredDeviceName()
+            deviceName = preferredDeviceName(),
+            aacpAvailable = io.nikos.propods.utils.isAacpCapable() ||
+                io.nikos.propods.utils.XposedState.bluetoothScopeEnabled
         )
     )
     val uiState: StateFlow<AirPodsUiState> = _uiState

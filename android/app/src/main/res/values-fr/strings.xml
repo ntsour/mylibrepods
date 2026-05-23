@@ -43,9 +43,9 @@
     <string name="add_widget">Ajouter le widget</string>
     <string name="noise_control_widget_description">Contrôlez le mode de réduction de bruit directement depuis votre écran d\'accueil.</string>
     <string name="island_connected_text">Connecté</string>
-    <string name="island_connected_remote_text">Connecté à Linux</string>
+    <string name="island_connected_remote_text">Connecté à un autre appareil</string>
     <string name="island_taking_over_text">Connecté</string>
-    <string name="island_moved_to_remote_text">Déplacé vers Linux</string>
+    <string name="island_moved_to_remote_text">Déplacé vers un autre appareil</string>
     <string name="island_moved_to_other_device_text">Déplacé vers %1$s</string>
     <string name="island_moved_to_other_device_reversed_text">Reconnecté depuis la notification</string>
     <string name="head_tracking">Suivi de la tête</string>

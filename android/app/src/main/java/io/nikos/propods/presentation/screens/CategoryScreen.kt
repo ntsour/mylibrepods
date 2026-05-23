@@ -300,7 +300,7 @@ private fun ControlsContent(
         if (capabilities.contains(Capability.STEM_CONFIG)) {
 
             // ── Stem Actions Grid ────────────────────────────────────────────
-            ExternalSectionHeader("Stem Actions", dark)
+            ExternalSectionHeader("Stem Actions", dark, requiresAacp = !state.aacpAvailable)
             Column(
                 Modifier.fillMaxWidth()
                     .background(cardColor, RoundedCornerShape(18.dp))
@@ -332,7 +332,8 @@ private fun ControlsContent(
                         StatefulPressDropdown(
                             side = "left", label = label, pressType = pressType,
                             defaultAction = defaultAction, state = state, viewModel = viewModel,
-                            actionOptions = actionOptions, enabled = selectedBud == "left",
+                            actionOptions = actionOptions,
+                            enabled = selectedBud == "left" && state.aacpAvailable,
                             dark = dark, modifier = Modifier.weight(1f),
                             readAction = { k, d -> readAction(k, d) }
                         )
@@ -340,7 +341,8 @@ private fun ControlsContent(
                         StatefulPressDropdown(
                             side = "right", label = label, pressType = pressType,
                             defaultAction = defaultAction, state = state, viewModel = viewModel,
-                            actionOptions = actionOptions, enabled = selectedBud == "right",
+                            actionOptions = actionOptions,
+                            enabled = selectedBud == "right" && state.aacpAvailable,
                             dark = dark, modifier = Modifier.weight(1f),
                             readAction = { k, d -> readAction(k, d) }
                         )
@@ -356,26 +358,27 @@ private fun ControlsContent(
         // ── Listening Mode Configuration ──────────────────────────────────────
         val currentByte = state.controlStates[AACPManager.Companion.ControlCommandIdentifiers.LISTENING_MODE_CONFIGS]?.get(0)?.toInt() ?: 0
         Column(Modifier.fillMaxWidth()) {
-            MenuSectionHeader("Listening Mode Configuration", dark)
+            MenuSectionHeader("Listening Mode Configuration", dark, requiresAacp = !state.aacpAvailable)
             Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 8.dp)) {
                 Text(stringResource(R.string.press_and_hold_noise_control_description), style = captionStyle(dark))
                 Spacer(Modifier.height(8.dp))
+                val lmEnabled = state.aacpAvailable
                 StyledSelectList(items = buildList {
                     if (state.offListeningMode) add(SelectItem(stringResource(R.string.off),
                         description = stringResource(R.string.listening_mode_off_description),
-                        selected = (currentByte and 0x01) != 0,
+                        selected = (currentByte and 0x01) != 0, enabled = lmEnabled,
                         onClick = { viewModel.toggleListeningMode(0x01) }))
                     add(SelectItem(stringResource(R.string.transparency),
                         description = stringResource(R.string.listening_mode_transparency_description),
-                        selected = (currentByte and 0x04) != 0,
+                        selected = (currentByte and 0x04) != 0, enabled = lmEnabled,
                         onClick = { viewModel.toggleListeningMode(0x04) }))
                     add(SelectItem(stringResource(R.string.adaptive),
                         description = stringResource(R.string.listening_mode_adaptive_description),
-                        selected = (currentByte and 0x08) != 0,
+                        selected = (currentByte and 0x08) != 0, enabled = lmEnabled,
                         onClick = { viewModel.toggleListeningMode(0x08) }))
                     add(SelectItem(stringResource(R.string.noise_cancellation),
                         description = stringResource(R.string.listening_mode_noise_cancellation_description),
-                        selected = (currentByte and 0x02) != 0,
+                        selected = (currentByte and 0x02) != 0, enabled = lmEnabled,
                         onClick = { viewModel.toggleListeningMode(0x02) }))
                 })
             }
@@ -438,7 +441,7 @@ internal fun ControlsConfigurationContent(
                 label,
                 selected = selectedByte(AACPManager.Companion.ControlCommandIdentifiers.DOUBLE_CLICK_INTERVAL) == value ||
                     (value == 0.toByte() && selectedByte(AACPManager.Companion.ControlCommandIdentifiers.DOUBLE_CLICK_INTERVAL) == null),
-                enabled = state.isPremium,
+                enabled = state.isPremium && state.aacpAvailable,
                 onClick = {
                     viewModel.setControlCommandByte(
                         AACPManager.Companion.ControlCommandIdentifiers.DOUBLE_CLICK_INTERVAL,
@@ -457,7 +460,7 @@ internal fun ControlsConfigurationContent(
                 label,
                 selected = selectedByte(AACPManager.Companion.ControlCommandIdentifiers.CLICK_HOLD_INTERVAL) == value ||
                     (value == 0.toByte() && selectedByte(AACPManager.Companion.ControlCommandIdentifiers.CLICK_HOLD_INTERVAL) == null),
-                enabled = state.isPremium,
+                enabled = state.isPremium && state.aacpAvailable,
                 onClick = {
                     viewModel.setControlCommandByte(
                         AACPManager.Companion.ControlCommandIdentifiers.CLICK_HOLD_INTERVAL,
@@ -479,7 +482,7 @@ internal fun ControlsConfigurationContent(
                     it
                 )
             },
-            enabled = state.isPremium
+            enabled = state.isPremium && state.aacpAvailable
         )
 
         if (state.capabilities.contains(Capability.LOUD_SOUND_REDUCTION) && state.vendorIdHook) {
@@ -494,7 +497,7 @@ internal fun ControlsConfigurationContent(
                         if (it) byteArrayOf(0x01) else byteArrayOf(0x00)
                     )
                 },
-                enabled = state.isPremium
+                enabled = state.isPremium && state.aacpAvailable
             )
         }
 
@@ -526,7 +529,7 @@ internal fun ControlsConfigurationContent(
             startIcon = "\uDBC0\uDEA1",
             endIcon = "\uDBC0\uDEA9",
             independent = true,
-            enabled = state.isPremium
+            enabled = state.isPremium && state.aacpAvailable
         )
 
         if (state.capabilities.contains(Capability.SWIPE_FOR_VOLUME)) {
@@ -543,7 +546,7 @@ internal fun ControlsConfigurationContent(
                         it
                     )
                 },
-                enabled = state.isPremium
+                enabled = state.isPremium && state.aacpAvailable
             )
 
             MenuDivider()
@@ -555,7 +558,7 @@ internal fun ControlsConfigurationContent(
                     label,
                     selected = selectedByte(AACPManager.Companion.ControlCommandIdentifiers.VOLUME_SWIPE_INTERVAL) == value ||
                         (value == 1.toByte() && selectedByte(AACPManager.Companion.ControlCommandIdentifiers.VOLUME_SWIPE_INTERVAL) == null),
-                    enabled = state.isPremium,
+                    enabled = state.isPremium && state.aacpAvailable,
                     onClick = {
                         viewModel.setControlCommandByte(
                             AACPManager.Companion.ControlCommandIdentifiers.VOLUME_SWIPE_INTERVAL,
@@ -596,15 +599,16 @@ private fun SettingsContent(
             AACPManager.Companion.ControlCommandIdentifiers.CONVERSATION_DETECT_CONFIG
         ]?.getOrNull(0) == 0x01.toByte()
         MenuDivider()
-        MenuSectionHeader("Conversation Awareness", dark)
+        MenuSectionHeader("Conversation Awareness", dark, requiresAacp = !state.aacpAvailable)
         Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
+            val masterEnabled = state.isPremium && state.aacpAvailable
             StyledToggle(label = stringResource(R.string.conversational_awareness),
                 description = stringResource(R.string.conversational_awareness_master_description),
-                checked = caEnabled && state.isPremium,
+                checked = caEnabled && masterEnabled,
                 onCheckedChange = { viewModel.setControlCommandBoolean(AACPManager.Companion.ControlCommandIdentifiers.CONVERSATION_DETECT_CONFIG, it) },
-                independent = true, enabled = state.isPremium)
+                independent = true, enabled = masterEnabled)
             Spacer(Modifier.height(4.dp))
-            val subEnabled = caEnabled && appState.isPremium
+            val subEnabled = caEnabled && appState.isPremium && state.aacpAvailable
             StyledToggle(label = stringResource(R.string.conversational_awareness_pause_music),
                 description = stringResource(R.string.conversational_awareness_pause_music_description),
                 checked = appState.conversationalAwarenessPauseMusicEnabled,
@@ -628,20 +632,20 @@ private fun SettingsContent(
         // Hearing Protection (PPE = ungated, Loud Sound Reduction = Xposed)
         if (capabilities.contains(Capability.LOUD_SOUND_REDUCTION) || hasPPE) {
             MenuDivider()
-            MenuSectionHeader("Hearing Protection", dark)
+            MenuSectionHeader("Hearing Protection", dark, requiresAacp = !state.aacpAvailable)
             Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
                 StyledToggle(label = stringResource(R.string.ppe),
                     description = stringResource(R.string.workspace_use_description),
                     checked = state.controlStates[AACPManager.Companion.ControlCommandIdentifiers.PPE_TOGGLE_CONFIG]?.getOrNull(0)?.toInt() == 1,
                     onCheckedChange = { viewModel.setControlCommandBoolean(AACPManager.Companion.ControlCommandIdentifiers.PPE_TOGGLE_CONFIG, it) },
-                    independent = true, enabled = state.isPremium)
+                    independent = true, enabled = state.isPremium && state.aacpAvailable)
                 Spacer(Modifier.height(4.dp))
                 Column(Modifier.alpha(if (hasXposed) 1f else DisabledAlpha.toFloat())) {
                     StyledToggle(label = stringResource(R.string.loud_sound_reduction),
                         description = stringResource(R.string.loud_sound_reduction_description),
                         checked = state.loudSoundReductionEnabled,
                         onCheckedChange = { if (hasXposed) viewModel.setATTCharacteristicValue(ATTHandles.LOUD_SOUND_REDUCTION, byteArrayOf(if (it) 1 else 0)) },
-                        independent = true, enabled = hasXposed && state.isPremium)
+                        independent = true, enabled = hasXposed && state.isPremium && state.aacpAvailable)
                     if (!hasXposed) { Spacer(Modifier.height(4.dp)); XposedRequiredBanner(dark) }
                 }
             }
@@ -788,14 +792,15 @@ private fun SmartContent(
             MenuDivider()
             val headOn = sharedPrefs.getBoolean("head_gestures_enabled", false) &&
                 (sharedPrefs.getBoolean("head_gestures_answer_call", true) || sharedPrefs.getBoolean("head_gestures_mute_call", true))
-            MenuNavRow("Head Gestures — ${if (headOn) "On" else "Off"}", dark) { navController.navigate("head_tracking") }
+            MenuNavRow("Head Gestures — ${if (headOn) "On" else "Off"}", dark,
+                enabled = state.aacpAvailable) { navController.navigate("head_tracking") }
         }
 
         // Adaptive Audio
         val model = state.instance?.model ?: AirPodsPro3()
         if (model.capabilities.contains(Capability.ADAPTIVE_VOLUME)) {
             MenuDivider()
-            MenuSectionHeader("Adaptive Audio", dark)
+            MenuSectionHeader("Adaptive Audio", dark, requiresAacp = !state.aacpAvailable)
             val adaptiveVal = remember {
                 mutableFloatStateOf(100f - (state.controlStates[AACPManager.Companion.ControlCommandIdentifiers.AUTO_ANC_STRENGTH]?.getOrNull(0)?.toFloat() ?: 50f))
             }
@@ -815,14 +820,14 @@ private fun SmartContent(
                     valueRange = 0f..100f, snapPoints = listOf(0f, 50f, 100f),
                     startIcon = "􀊥", endIcon = "􀊩", independent = true,
                     description = stringResource(R.string.adaptive_audio_description),
-                    enabled = state.isPremium)
+                    enabled = state.isPremium && state.aacpAvailable)
             }
         }
 
         // Camera Control
         if (capabilities.contains(Capability.STEM_CONFIG) && !BuildConfig.PLAY_BUILD) {
             MenuDivider()
-            MenuSectionHeader("Camera Control", dark)
+            MenuSectionHeader("Camera Control", dark, requiresAacp = !state.aacpAvailable)
             Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
                 val currentCameraAction by viewModel.cameraAction.collectAsState()
                 var accessibilityGranted by remember {
@@ -867,15 +872,16 @@ private fun SmartContent(
                     }
                     Spacer(Modifier.height(8.dp))
                 }
-                Column(Modifier.alpha(if (accessibilityGranted) 1f else DisabledAlpha.toFloat())) {
+                val camEnabled = accessibilityGranted && state.aacpAvailable
+                Column(Modifier.alpha(if (camEnabled) 1f else DisabledAlpha.toFloat())) {
                     StyledSelectList(items = listOf(
                         SelectItem("Off", selected = currentCameraAction == null,
-                            enabled = accessibilityGranted || currentCameraAction == null,
+                            enabled = camEnabled || currentCameraAction == null,
                             onClick = { viewModel.setCameraAction(null) }),
                         SelectItem("Press once", selected = currentCameraAction == AACPManager.Companion.StemPressType.SINGLE_PRESS,
-                            enabled = accessibilityGranted, onClick = { viewModel.setCameraAction(AACPManager.Companion.StemPressType.SINGLE_PRESS) }),
+                            enabled = camEnabled, onClick = { viewModel.setCameraAction(AACPManager.Companion.StemPressType.SINGLE_PRESS) }),
                         SelectItem("Press and hold", selected = currentCameraAction == AACPManager.Companion.StemPressType.LONG_PRESS,
-                            enabled = accessibilityGranted, onClick = { viewModel.setCameraAction(AACPManager.Companion.StemPressType.LONG_PRESS) }),
+                            enabled = camEnabled, onClick = { viewModel.setCameraAction(AACPManager.Companion.StemPressType.LONG_PRESS) }),
                     ))
                 }
             }
@@ -890,12 +896,13 @@ private fun SmartContent(
                 StyledToggle(label = stringResource(R.string.sleep_detection),
                     checked = state.controlStates[id]?.getOrNull(0) == 0x01.toByte(),
                     onCheckedChange = { viewModel.setControlCommandBoolean(id, it) },
-                    independent = true, enabled = state.isPremium)
+                    independent = true, enabled = state.isPremium && state.aacpAvailable)
                 Spacer(Modifier.height(4.dp))
             }
             StyledToggle(label = stringResource(R.string.optimized_charging),
                 description = stringResource(R.string.optimized_charging_description),
-                checked = state.dynamicEndOfCharge, onCheckedChange = viewModel::setDynamicEndOfCharge, independent = true)
+                checked = state.dynamicEndOfCharge, onCheckedChange = viewModel::setDynamicEndOfCharge,
+                independent = true, enabled = state.aacpAvailable)
         }
 
         // Resume media + battery alerts (merged into Automation section)
@@ -1006,6 +1013,82 @@ private fun AppSettingsContent(
             }
         }
         MenuDivider()
+        // ── Background activity / battery optimization ───────────────────────
+        // When the system applies battery optimization to ProPods, the foreground
+        // service can be delayed or killed — handover, BLE proximity, and the boot
+        // autostart all become unreliable. Surface the current state and a button
+        // to open the system dialog. Same standard API works on Pixel/AOSP and
+        // every OEM (Xiaomi, OnePlus, etc.).
+        MenuSectionHeader("Background Activity", dark)
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            val pm = remember { context.getSystemService(android.os.PowerManager::class.java) }
+            // Re-evaluate every time the screen recomposes (user may have changed it).
+            var unrestricted by remember { mutableStateOf(pm?.isIgnoringBatteryOptimizations(context.packageName) == true) }
+            // Refresh whenever the user returns from the settings dialog.
+            val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+            DisposableEffect(lifecycleOwner) {
+                val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                    if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                        unrestricted = pm?.isIgnoringBatteryOptimizations(context.packageName) == true
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+            }
+            Text(
+                if (unrestricted) "✅ Unrestricted — service runs reliably"
+                else "⚠ Battery optimization is active",
+                style = TextStyle(
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    fontFamily = SfPro,
+                    color = if (unrestricted) Color(0xFF34C759)
+                            else Color(0xFFFF9500)
+                )
+            )
+            Text(
+                if (unrestricted)
+                    "ProPods is allowed to run in the background. Handover, " +
+                    "BLE proximity, and boot autostart will work."
+                else
+                    "The system may kill the ProPods service to save battery. " +
+                    "Handover may miss events, and ProPods may not autostart on boot. " +
+                    "Tap below to set it to Unrestricted.",
+                style = captionStyle(dark)
+            )
+            if (!unrestricted) {
+                StyledButton(
+                    onClick = {
+                        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                            data = "package:${context.packageName}".toUri()
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        runCatching { context.startActivity(intent) }.onFailure {
+                            // Fallback: open the general battery-optimization list
+                            runCatching {
+                                context.startActivity(
+                                    Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                )
+                            }
+                        }
+                    },
+                    backdrop = rememberLayerBackdrop(),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp)
+                ) {
+                    Text(
+                        "Allow unrestricted background activity",
+                        style = TextStyle(
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                            fontFamily = SfPro,
+                            color = if (dark) Color.White else Color.Black
+                        )
+                    )
+                }
+            }
+        }
+        MenuDivider()
         MenuNavRow("Permissions", dark) { navController.navigate("permissions") }
     }
 }
@@ -1038,32 +1121,48 @@ private fun AudioContent(
                 onConversationalAwarenessCheckedChange = { viewModel.setControlCommandBoolean(AACPManager.Companion.ControlCommandIdentifiers.CONVERSATION_DETECT_CONFIG, it) },
                 loudSoundReductionChecked = state.loudSoundReductionEnabled,
                 onLoudSoundReductionCheckedChange = { viewModel.setATTCharacteristicValue(ATTHandles.LOUD_SOUND_REDUCTION, byteArrayOf(if (it) 0x01.toByte() else 0x00.toByte())) },
-                vendorIdHook = state.vendorIdHook, isPremium = state.isPremium)
+                vendorIdHook = state.vendorIdHook, isPremium = state.isPremium,
+                aacpAvailable = state.aacpAvailable)
         }
-        // Connection Settings depend on AACP or are unwanted on limited-mode devices —
-        // shown only where AACP has succeeded at least once. Hidden on the Xiaomi.
-        if (state.connectionSuccessful) {
-            MenuDivider()
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                ConnectionSettings(
-                    crossDeviceEnabled = state.crossDeviceEnabled,
-                    onCrossDeviceChanged = { viewModel.setCrossDeviceEnabled(it) },
-                    crossDevicePeerMac = state.crossDevicePeerMac,
-                    onPeerMacChanged = { viewModel.setCrossDevicePeerMac(it) },
-                    crossDevicePeerConnected = state.crossDevicePeerConnected,
-                    onReconnectCrossDevice = { viewModel.reconnectCrossDevice() },
-                    automaticEarDetectionEnabled = state.automaticEarDetectionEnabled,
-                    onAutomaticEarDetectionChanged = { viewModel.setAutomaticEarDetectionEnabled(it) },
-                    automaticConnectionEnabled = state.automaticConnectionEnabled,
-                    onAutomaticConnectionChanged = { viewModel.setAutomaticConnectionEnabled(it) })
-            }
+        // Connection Settings — shown for both AACP and limited-mode devices.
+        // Cross-device handover is the core feature; hiding it on non-AACP devices
+        // made the toggle unreachable (connectionSuccessful is false there).
+        MenuDivider()
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+            ConnectionSettings(
+                crossDeviceEnabled = state.crossDeviceEnabled,
+                onCrossDeviceChanged = { viewModel.setCrossDeviceEnabled(it) },
+                crossDevicePeerMac = state.crossDevicePeerMac,
+                onPeerMacChanged = { viewModel.setCrossDevicePeerMac(it) },
+                crossDevicePeerConnected = state.crossDevicePeerConnected,
+                onReconnectCrossDevice = { viewModel.reconnectCrossDevice() },
+                automaticEarDetectionEnabled = state.automaticEarDetectionEnabled,
+                onAutomaticEarDetectionChanged = { viewModel.setAutomaticEarDetectionEnabled(it) },
+                automaticConnectionEnabled = state.automaticConnectionEnabled,
+                onAutomaticConnectionChanged = { viewModel.setAutomaticConnectionEnabled(it) },
+                earDetectionAvailable = state.aacpAvailable)
         }
         MenuDivider()
         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
             val id = AACPManager.Companion.ControlCommandIdentifiers.MIC_MODE
-            MicrophoneSettings(hazeState = remember { HazeState() },
-                micModeValue = state.controlStates[id]?.getOrNull(0) ?: 0x00.toByte(),
-                onMicModeValueChanged = { viewModel.setControlCommandByte(id, it) })
+            if (state.aacpAvailable) {
+                MicrophoneSettings(hazeState = remember { HazeState() },
+                    micModeValue = state.controlStates[id]?.getOrNull(0) ?: 0x00.toByte(),
+                    onMicModeValueChanged = { viewModel.setControlCommandByte(id, it) })
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(modifier = Modifier.weight(1f).alpha(0.4f)) {
+                        MicrophoneSettings(hazeState = remember { HazeState() },
+                            micModeValue = state.controlStates[id]?.getOrNull(0) ?: 0x00.toByte(),
+                            onMicModeValueChanged = { /* no-op */ })
+                    }
+                    io.nikos.propods.presentation.components.RequiresAacpIcon()
+                }
+            }
         }
         if (context.checkSelfPermission("android.permission.BLUETOOTH_PRIVILEGED") == PackageManager.PERMISSION_GRANTED) {
             MenuDivider()
@@ -1150,17 +1249,25 @@ private fun HelpContent(
 // ─── Shared helper composables for Controls screen ───────────────────────────
 
 @Composable
-private fun ExternalSectionHeader(label: String, dark: Boolean) {
-    Text(
-        label.uppercase(),
-        style = TextStyle(
-            fontSize = 16.sp,
-            fontWeight = FontWeight.SemiBold,
-            fontFamily = SfPro,
-            color = if (dark) Color.White.copy(0.5f) else Color.Black.copy(0.5f)
-        ),
-        modifier = Modifier.padding(start = 16.dp, top = 4.dp, bottom = 0.dp)
-    )
+private fun ExternalSectionHeader(label: String, dark: Boolean, requiresAacp: Boolean = false) {
+    Row(
+        modifier = Modifier.padding(start = 16.dp, top = 4.dp, bottom = 0.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            label.uppercase(),
+            style = TextStyle(
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                fontFamily = SfPro,
+                color = if (dark) Color.White.copy(0.5f) else Color.Black.copy(0.5f)
+            )
+        )
+        if (requiresAacp) {
+            io.nikos.propods.presentation.components.RequiresAacpIcon()
+        }
+    }
 }
 
 @Composable

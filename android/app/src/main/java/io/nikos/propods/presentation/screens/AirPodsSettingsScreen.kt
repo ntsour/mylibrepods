@@ -128,7 +128,7 @@ import io.nikos.propods.presentation.components.AudioSettings
 import io.nikos.propods.presentation.components.BatteryView
 import io.nikos.propods.presentation.components.CallControlSettings
 import io.nikos.propods.presentation.components.ConnectionSettings
-import io.nikos.propods.presentation.components.PeerConnectionPanel
+
 import io.nikos.propods.presentation.components.DeviceInfoCard
 import io.nikos.propods.presentation.components.MicrophoneSettings
 import io.nikos.propods.presentation.components.NavigationButton
@@ -241,16 +241,21 @@ private fun buildSearchIndex(): List<SearchableItem> = listOf(
 // ─── Shared primitives ───────────────────────────────────────────────────────
 
 @Composable
-internal fun MenuSectionHeader(label: String, dark: Boolean) {
-    Box(
+internal fun MenuSectionHeader(label: String, dark: Boolean, requiresAacp: Boolean = false) {
+    Row(
         Modifier.fillMaxWidth()
             .background(if (dark) Color(0xFF000000) else Color(0xFFF2F2F7))
-            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Text(label.uppercase(), style = TextStyle(
             fontSize = 12.sp, fontWeight = FontWeight.SemiBold, fontFamily = SfPro,
             color = if (dark) Color.White.copy(0.5f) else Color.Black.copy(0.5f)
         ))
+        if (requiresAacp) {
+            io.nikos.propods.presentation.components.RequiresAacpIcon()
+        }
     }
 }
 
@@ -261,17 +266,35 @@ internal fun MenuDivider() = HorizontalDivider(
 )
 
 @Composable
-internal fun MenuNavRow(label: String, dark: Boolean, subtitle: String? = null, onClick: () -> Unit) {
+internal fun MenuNavRow(
+    label: String,
+    dark: Boolean,
+    subtitle: String? = null,
+    enabled: Boolean = true,
+    onClick: () -> Unit
+) {
+    val rowAlpha = if (enabled) 1f else 0.4f
+    val rowModifier = Modifier.fillMaxWidth()
+        .then(
+            if (enabled) Modifier.clickable(
+                remember { MutableInteractionSource() }, null, onClick = onClick
+            ) else Modifier
+        )
+        .padding(horizontal = 16.dp, vertical = if (subtitle != null) 10.dp else 14.dp)
+        .alpha(rowAlpha)
     Row(
-        Modifier.fillMaxWidth()
-            .clickable(remember { MutableInteractionSource() }, null, onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = if (subtitle != null) 10.dp else 14.dp),
-        horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
+        rowModifier,
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
         Column(Modifier.weight(1f)) {
             Text(label, style = bodyStyle(dark))
             if (subtitle != null)
                 Text(subtitle, style = captionStyle(dark))
+        }
+        if (!enabled) {
+            io.nikos.propods.presentation.components.RequiresAacpIcon()
+            Spacer(Modifier.width(8.dp))
         }
         Text("  ›", style = TextStyle(fontSize = 20.sp, fontFamily = SfPro,
             color = if (dark) Color.White.copy(0.35f) else Color.Black.copy(0.35f)))
@@ -485,7 +508,11 @@ fun AirPodsSettingsScreen(
                     }
                 }
             }
-        } else if (state.isLocallyConnected) {
+        } else if (state.isLocallyConnected || !state.aacpAvailable) {
+            // Limited-mode devices always get the unified ConnectedScreen — they will
+            // never become "locally connected" in the AACP sense, but the rest of the
+            // app (battery via BLE, handover, find my, etc.) works for them. AACP-only
+            // controls inside ConnectedScreen are greyed out via state.aacpAvailable.
             ConnectedScreen(
                 state = state, appState = appState,
                 viewModel = viewModel, appSettingsViewModel = appSettingsViewModel,
@@ -582,6 +609,37 @@ private fun ConnectedScreen(
                 awaitPointerEventScope { while (true) { val e = awaitPointerEvent(PointerEventPass.Initial); e.changes.forEach { it.consume() } } }
             } else Modifier),
     ) {
+        // ── Audio-route status ─────────────────────────────────────────────────
+        // Limited-mode devices always render ConnectedScreen even when the audio
+        // isn't routed here — so show an explicit indicator. AACP-capable
+        // devices show "Connected" when AACP is up; otherwise show A2DP or "on
+        // another device" / "not nearby".
+        val audioHere = state.isLocallyConnected || state.isA2dpConnected
+        val airpodsNearby = state.battery.isNotEmpty()
+        val (statusText, statusDot) = when {
+            audioHere -> "Connected — audio routed here" to Color(0xFF34C759)
+            airpodsNearby -> "AirPods on another device or in the case" to Color(0xFFFF9500)
+            else -> "AirPods not nearby" to Color(0xFF8E8E93)
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(
+                modifier = Modifier.size(8.dp)
+                    .background(statusDot, RoundedCornerShape(50))
+            )
+            Text(
+                statusText,
+                style = TextStyle(
+                    fontSize = 13.sp,
+                    fontFamily = SfPro,
+                    color = if (dark) Color.White.copy(0.7f) else Color.Black.copy(0.7f)
+                )
+            )
+        }
+
         // ── Battery ──────────────────────────────────────────────────────────
         BatteryView(
             batteryList = state.battery,
@@ -592,11 +650,28 @@ private fun ConnectedScreen(
         // ── Listening Mode ────────────────────────────────────────────────
         if (capabilities.contains(Capability.LISTENING_MODE)) {
             Spacer(Modifier.height(8.dp))
-            NoiseControlSettings(
-                showOffListeningMode = true, // always show Off option — toggle lives in Smart Features
-                noiseControlModeValue = state.controlStates[AACPManager.Companion.ControlCommandIdentifiers.LISTENING_MODE]?.getOrNull(0)?.toInt() ?: 3,
-                onNoiseControlModeChanged = { viewModel.setControlCommandInt(AACPManager.Companion.ControlCommandIdentifiers.LISTENING_MODE, it) }
-            )
+            if (state.aacpAvailable) {
+                NoiseControlSettings(
+                    showOffListeningMode = true,
+                    noiseControlModeValue = state.controlStates[AACPManager.Companion.ControlCommandIdentifiers.LISTENING_MODE]?.getOrNull(0)?.toInt() ?: 3,
+                    onNoiseControlModeChanged = { viewModel.setControlCommandInt(AACPManager.Companion.ControlCommandIdentifiers.LISTENING_MODE, it) }
+                )
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(modifier = Modifier.weight(1f).alpha(DisabledAlpha.toFloat())) {
+                        NoiseControlSettings(
+                            showOffListeningMode = true,
+                            noiseControlModeValue = state.controlStates[AACPManager.Companion.ControlCommandIdentifiers.LISTENING_MODE]?.getOrNull(0)?.toInt() ?: 3,
+                            onNoiseControlModeChanged = { /* no-op: AACP not available */ }
+                        )
+                    }
+                    io.nikos.propods.presentation.components.RequiresAacpIcon()
+                }
+            }
         }
 
         // ── Transparency (Xposed-only) ────────────────────────────────────
@@ -634,6 +709,30 @@ private fun CategoryTileGrid(
 ) {
     val tileColor = if (dark) Color(0xFF1C1C1E) else Color(0xFFFFFFFF)
     val textColor = if (dark) Color.White else Color.Black
+
+    // Scale tile typography + iconography based on screen width.
+    // Reference: phone is ~360–420 dp wide; tablet is ≥ 600 dp; large tablet ≥ 840 dp.
+    val screenWidthDp = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp
+    val emojiFontSize = when {
+        screenWidthDp >= 840 -> 44.sp
+        screenWidthDp >= 600 -> 36.sp
+        else                 -> 26.sp
+    }
+    val emojiSlotWidth = when {
+        screenWidthDp >= 840 -> 60.dp
+        screenWidthDp >= 600 -> 48.dp
+        else                 -> 34.dp
+    }
+    val labelFontSize = when {
+        screenWidthDp >= 840 -> 20.sp
+        screenWidthDp >= 600 -> 17.sp
+        else                 -> 13.sp
+    }
+    val tileCorner = if (screenWidthDp >= 600) 24.dp else 18.dp
+    val tilePadH   = if (screenWidthDp >= 600) 20.dp else 12.dp
+    val tilePadV   = if (screenWidthDp >= 600) 16.dp else 10.dp
+    val rowSpacing = if (screenWidthDp >= 600) 12.dp else 8.dp
+
     val tiles = listOf(
         Triple("controls",    "🎧", "AirPods Controls"),
         Triple("settings",    "⚙️", "AirPods Settings"),
@@ -645,24 +744,24 @@ private fun CategoryTileGrid(
     // Each row takes an equal share of the available height via weight(1f)
     Column(
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        verticalArrangement = Arrangement.spacedBy(rowSpacing)
     ) {
         tiles.chunked(2).forEach { row ->
             Row(
                 modifier = Modifier.fillMaxWidth().weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(rowSpacing)
             ) {
                 row.forEach { (key, emoji, label) ->
                     androidx.compose.foundation.layout.Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
-                            .background(tileColor, RoundedCornerShape(18.dp))
+                            .background(tileColor, RoundedCornerShape(tileCorner))
                             .clickable(
                                 interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                                 indication = null
                             ) { navController.navigate("category/$key") }
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                            .padding(horizontal = tilePadH, vertical = tilePadV),
                         contentAlignment = Alignment.CenterStart
                     ) {
                         Row(
@@ -671,8 +770,8 @@ private fun CategoryTileGrid(
                         ) {
                             Text(
                                 emoji,
-                                modifier = Modifier.width(34.dp),
-                                style = TextStyle(fontSize = 26.sp, fontFamily = SfPro)
+                                modifier = Modifier.width(emojiSlotWidth),
+                                style = TextStyle(fontSize = emojiFontSize, fontFamily = SfPro)
                             )
                             Box(
                                 modifier = Modifier
@@ -681,7 +780,7 @@ private fun CategoryTileGrid(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(label, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
-                                style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                                style = TextStyle(fontSize = labelFontSize, fontWeight = FontWeight.Medium,
                                 fontFamily = SfPro, color = textColor))
                             }
                         }
@@ -771,15 +870,26 @@ private fun DisconnectedScreen(
                 }
             }
         } else {
-            item(key = "peer_connection") {
+            // Cross-device settings — surfaced here on limited-mode devices because
+            // the CategoryScreen / AppSettings copies are unreachable (no category
+            // grid). The full ConnectionSettings component gives the user the master
+            // toggle, peer selector, and reconnect button.
+            item(key = "connection_settings") {
                 Column(Modifier.fillMaxWidth().background(cardBg, RoundedCornerShape(18.dp)).padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Peer Connection", style = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = textColor.copy(0.6f), fontFamily = SfPro))
-                    Text("Connect to another Android device.", style = TextStyle(fontSize = 14.sp, fontFamily = SfPro, color = textColor.copy(0.55f)))
-                    PeerConnectionPanel(
+                    Text("Connection Settings", style = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = textColor.copy(0.6f), fontFamily = SfPro))
+                    Text("Configure Bluetooth and cross-device settings.", style = TextStyle(fontSize = 14.sp, fontFamily = SfPro, color = textColor.copy(0.55f)))
+                    ConnectionSettings(
+                        crossDeviceEnabled = state.crossDeviceEnabled,
+                        onCrossDeviceChanged = { viewModel.setCrossDeviceEnabled(it) },
                         crossDevicePeerMac = state.crossDevicePeerMac,
                         onPeerMacChanged = { mac -> viewModel.setCrossDevicePeerMac(mac); viewModel.setCrossDeviceEnabled(true) },
                         crossDevicePeerConnected = state.crossDevicePeerConnected,
-                        onReconnectCrossDevice = viewModel::reconnectCrossDevice
+                        onReconnectCrossDevice = viewModel::reconnectCrossDevice,
+                        automaticEarDetectionEnabled = state.automaticEarDetectionEnabled,
+                        onAutomaticEarDetectionChanged = { viewModel.setAutomaticEarDetectionEnabled(it) },
+                        automaticConnectionEnabled = state.automaticConnectionEnabled,
+                        onAutomaticConnectionChanged = { viewModel.setAutomaticConnectionEnabled(it) },
+                        earDetectionAvailable = state.aacpAvailable
                     )
                 }
             }

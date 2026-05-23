@@ -43,9 +43,9 @@
     <string name="add_widget">Thêm widget</string>
     <string name="noise_control_widget_description">Điều khiển chế độ chống ồn trực tiếp từ màn hình chính.</string>
     <string name="island_connected_text">Đã kết nối</string>
-    <string name="island_connected_remote_text">Đã kết nối với Linux</string>
+    <string name="island_connected_remote_text">Đã kết nối với thiết bị khác</string>
     <string name="island_taking_over_text">Đã kết nối</string>
-    <string name="island_moved_to_remote_text">Đã chuyển sang Linux</string>
+    <string name="island_moved_to_remote_text">Đã chuyển sang thiết bị khác</string>
     <string name="island_moved_to_other_device_text">Đã chuyển sang %1$s</string>
     <string name="island_moved_to_other_device_reversed_text">Kết nối lại từ thông báo</string>
     <string name="head_tracking">Theo dõi chuyển động đầu</string>
