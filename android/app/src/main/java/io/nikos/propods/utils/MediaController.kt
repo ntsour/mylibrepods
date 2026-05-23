@@ -150,7 +150,31 @@ object MediaController {
         if (mac.isEmpty()) return
         pendingMusicTakeoverForMac = mac
         pendingMusicTakeoverSetAt = System.currentTimeMillis()
+        // Clear the "we paused this device's media" flag. By definition, if we're
+        // arming a music takeover the user has just initiated playback — any prior
+        // iPausedTheMedia=true (e.g. set when we yielded the AirPods to a peer for
+        // a call) is stale. Without this, when the AirPods come back the
+        // AudioDeviceCallback route-land branch hits the
+        // "iPausedTheMedia=true; user paused intentionally, NOT replaying"
+        // path and suppresses the replay, leaving the AirPods connected but silent.
+        if (iPausedTheMedia) {
+            Log.d("MediaController", "armPendingMusicTakeover: clearing stale iPausedTheMedia=true")
+            iPausedTheMedia = false
+        }
         Log.d("MediaController", "armPendingMusicTakeover($mac)")
+    }
+
+    /**
+     * Reset the music-active edge-trigger state. Call this whenever the AirPods
+     * leave us (peer takeover, autonomous switch, range loss) so the next
+     * playback callback after a future play press is treated as a fresh
+     * false→true transition instead of being suppressed by a stale `true`.
+     */
+    fun resetMusicActiveState() {
+        if (lastKnownIsMusicActive != null) {
+            Log.d("MediaController", "resetMusicActiveState (was: $lastKnownIsMusicActive)")
+        }
+        lastKnownIsMusicActive = null
     }
 
     /** Called when we lose ownership or otherwise want to drop the pending state. */
@@ -479,12 +503,20 @@ object MediaController {
                         ServiceManager.getService()?.takeOver("music")
                     }
                 }
-            } else if (!isActive && hasNewMusicOrMovie && lastKnownIsMusicActive != true) {
+            } else if (!isActive && hasNewMusicOrMovie) {
                 // HyperOS quirk: AudioPlaybackCallback fires with media configs before
                 // audioManager.isMusicActive flips to true. Re-check after 500ms.
+                //
+                // The `lastKnownIsMusicActive != true` guard was removed from the
+                // outer condition: when the AirPods autonomously leave Xiaomi
+                // (Apple auto-switch / OS reconnect) and the user later presses
+                // play, `lastKnownIsMusicActive` is stale-true from the last
+                // session and would suppress the re-check. We let the inner
+                // `audioManager.isMusicActive` check at +500 ms be the
+                // source of truth.
                 Log.d("MediaController", "Media config seen but isMusicActive=false; scheduling delayed re-check")
                 handler.postDelayed({
-                    if (audioManager.isMusicActive && lastKnownIsMusicActive != true) {
+                    if (audioManager.isMusicActive) {
                         val fluxAgeMsNow = System.currentTimeMillis() - io.nikos.propods.services.AirPodsService.lastA2dpStateChangeMs
                         val inFluxNow = io.nikos.propods.services.AirPodsService.lastA2dpStateChangeMs > 0 &&
                             fluxAgeMsNow < io.nikos.propods.services.AirPodsService.A2DP_STATE_FLUX_WINDOW_MS

@@ -288,6 +288,9 @@ object CrossDevice {
             }
             raw.contentEquals(CrossDevicePackets.AIRPODS_CONNECTED.packet) -> {
                 isAvailable = true
+                // Peer explicitly announced ownership — if we were expecting a takeover,
+                // arm the peer-drop cooldown proactively (don't wait for ACL_DISCONNECTED).
+                ServiceManager.getService()?.confirmPeerOwnership()
             }
             raw.contentEquals(CrossDevicePackets.AIRPODS_DISCONNECTED.packet) -> {
                 isAvailable = false

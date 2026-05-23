@@ -281,6 +281,37 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         @Volatile @JvmStatic var peerRequestedDisconnectMs: Long = 0L
 
         /**
+         * Event-based replacement for the fragile peerRequestedDisconnectMs time-window.
+         *
+         * Set true in [markPeerTakeoverAttempt] (called when we receive
+         * REQUEST_DISCONNECT or REQUEST_HANDOVER from the peer). Cleared by:
+         *   - ACL_DISCONNECTED for the AirPods (we observed the AirPods leave us);
+         *   - inbound AIRPODS_CONNECTED packet from the peer (peer confirmed ownership);
+         *   - the [EXPECTING_PEER_TAKEOVER_CEILING_MS] ceiling (safety net for the
+         *     case where the peer never confirms — e.g. handover silently failed);
+         *   - user-initiated manual reconnect (via the same code path that clears
+         *     [peerDropCooldownUntilMs]).
+         *
+         * When set, an ACL_DISCONNECTED arms [peerDropCooldownUntilMs] unconditionally
+         * — no timing arithmetic. This handles slow takeovers (cold-connect, retry
+         * escalation) that exceeded the old 6 s window, AND avoids false positives
+         * from unrelated ACL drops (case, range, BT flake) outside an active takeover.
+         */
+        @Volatile @JvmStatic var expectingPeerTakeover: Boolean = false
+        const val EXPECTING_PEER_TAKEOVER_CEILING_MS: Long = 15_000L
+
+        // Handler + runnable used to clear the expectingPeerTakeover ceiling.
+        // Placed in the companion so they're reachable from inner BroadcastReceiver
+        // anonymous classes alongside the @JvmStatic flag they protect.
+        @JvmStatic val takeoverFlagHandler: Handler = Handler(Looper.getMainLooper())
+        @JvmStatic val clearExpectingPeerTakeoverRunnable: Runnable = Runnable {
+            if (expectingPeerTakeover) {
+                Log.d(TAG, "expectingPeerTakeover ceiling reached — clearing without confirmation")
+                expectingPeerTakeover = false
+            }
+        }
+
+        /**
          * Timestamp when we initiated a CrossDevice (RFCOMM) takeover. Used as a guard
          * window: while we are within [CROSS_DEVICE_TAKEOVER_WINDOW_MS] of this, the
          * audio-source callback must not relinquish ownership — instead it should
@@ -3203,20 +3234,33 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                 } else if (BluetoothDevice.ACTION_ACL_DISCONNECTED == action) {
                     // The OS dropped the ACL link for this device. If it's our AirPods,
                     // fire the internal AIRPODS_DISCONNECTED broadcast so our connection
-                    // receiver closes the L2CAP socket. Only arm cooldown if a peer actually
-                    // requested the disconnect (via REQUEST_DISCONNECT in last 2 seconds).
+                    // receiver closes the L2CAP socket. Arm peer-drop cooldown only
+                    // when `expectingPeerTakeover` is set — i.e. we received a
+                    // REQUEST_DISCONNECT/REQUEST_HANDOVER recently enough that the
+                    // ceiling hasn't cleared the flag. This is event-based: no timing
+                    // arithmetic, no false positives from unrelated ACL drops (case,
+                    // range, BT flake), no false negatives from slow takeovers.
                     val savedMac = context?.getSharedPreferences("settings", MODE_PRIVATE)
                         ?.getString("mac_address", null)
                     if (savedMac != null && bluetoothDevice.address == savedMac) {
                         val now = System.currentTimeMillis()
-                        val peerTookOver = now < peerRequestedDisconnectMs + 2_000L
+                        val peerTookOver = expectingPeerTakeover
                         Log.d(
                             TAG,
-                            "<LogCollector:Conn> ACL_DISCONNECTED for AirPods (${bluetoothDevice.address}) — peerTookOver=$peerTookOver"
+                            "<LogCollector:Conn> ACL_DISCONNECTED for AirPods (${bluetoothDevice.address}) — peerTookOver=$peerTookOver (expectingPeerTakeover=$expectingPeerTakeover)"
                         )
                         if (peerTookOver) {
                             peerDropCooldownUntilMs = now + PEER_DROP_COOLDOWN_MS
+                            expectingPeerTakeover = false
+                            takeoverFlagHandler.removeCallbacks(clearExpectingPeerTakeoverRunnable)
                         }
+                        // The AirPods are no longer routing audio through us. Reset
+                        // MediaController's lastKnownIsMusicActive edge-trigger state
+                        // so a future user play press isn't suppressed by stale "true"
+                        // left over from this session — applies whether the peer took
+                        // over OR the AirPods autonomously switched away (Apple
+                        // auto-switch, OS reconnect, range loss).
+                        io.nikos.propods.utils.MediaController.resetMusicActiveState()
                         a2dpConnectedToOurMac = false
                         context.sendBroadcast(
                             Intent(AirPodsNotifications.AIRPODS_DISCONNECTED).apply {
@@ -3247,6 +3291,20 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                             detectedIntent.putExtra("device", bluetoothDevice)
                             detectedIntent.setPackage(context?.packageName)
                             context?.sendBroadcast(detectedIntent)
+                            // Announce ownership to the cross-device peer on A2DP-connected,
+                            // not just on AACP_ACK (line ~4031). Limited-mode destinations
+                            // (no AACP) never reach that AACP path — without this, the peer
+                            // would never receive an AIRPODS_CONNECTED packet from a limited
+                            // taker, losing the proactive confirmation path that powers
+                            // confirmPeerOwnership() on the source. Gated on
+                            // `CrossDevice.isAvailable` so we don't double-fire when the
+                            // AACP path already flipped it false and notified.
+                            if (action == "android.bluetooth.a2dp.profile.action.CONNECTION_STATE_CHANGED"
+                                && CrossDevice.isAvailable) {
+                                CrossDevice.isAvailable = false
+                                CrossDevice.notifyConnected()
+                                Log.d(TAG, "Notified CrossDevice peer (A2DP connected): AIRPODS_CONNECTED")
+                            }
                         } else if (connectionState == 0) { // BluetoothProfile.STATE_DISCONNECTED
                             Log.d(TAG, "Profile disconnected for AirPods (${bluetoothDevice.address})")
                             a2dpConnectedToOurMac = false
@@ -3709,8 +3767,13 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                 return
             }
         } else {
-            // User pressed connect — they want to take over. Clear the cooldown.
+            // User pressed connect — they want to take over. Clear the cooldown
+            // AND the expectingPeerTakeover flag (a subsequent peer REQUEST_DISCONNECT
+            // can re-arm cleanly; without the clear, the next markPeerTakeoverAttempt
+            // would just refresh an already-true flag — harmless but confusing).
             peerDropCooldownUntilMs = 0L
+            expectingPeerTakeover = false
+            takeoverFlagHandler.removeCallbacks(clearExpectingPeerTakeoverRunnable)
         }
         // Hard dedup: if we already have an open L2CAP socket to the AirPods,
         // don't open another one. AirPods will not tolerate two concurrent
@@ -4052,12 +4115,31 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
 
     fun markPeerTakeoverAttempt() {
         // Mark that a peer (cross-device) requested disconnect so ACL_DISCONNECTED
-        // handler knows to apply the peer-drop cooldown
+        // and inbound AIRPODS_CONNECTED handlers know to apply the peer-drop cooldown.
         AirPodsService.peerRequestedDisconnectMs = System.currentTimeMillis()
+        AirPodsService.expectingPeerTakeover = true
+        takeoverFlagHandler.removeCallbacks(clearExpectingPeerTakeoverRunnable)
+        takeoverFlagHandler.postDelayed(
+            clearExpectingPeerTakeoverRunnable,
+            EXPECTING_PEER_TAKEOVER_CEILING_MS
+        )
+    }
+
+    /**
+     * Called from the inbound AIRPODS_CONNECTED packet handlers (CrossDevice and
+     * CrossDeviceClient) when the peer announces it has the AirPods. If we are
+     * currently expecting a takeover, arm the peer-drop cooldown proactively
+     * (don't wait for ACL_DISCONNECTED) and clear the flag.
+     */
+    fun confirmPeerOwnership() {
+        if (!expectingPeerTakeover) return
+        peerDropCooldownUntilMs = System.currentTimeMillis() + PEER_DROP_COOLDOWN_MS
+        expectingPeerTakeover = false
+        takeoverFlagHandler.removeCallbacks(clearExpectingPeerTakeoverRunnable)
+        Log.d(TAG, "Peer confirmed ownership via AIRPODS_CONNECTED — cooldown armed proactively")
     }
 
     fun disconnectForCD() {
-        if (!this::socket.isInitialized) return
         // Anti-pingpong: when ownership moves to a CrossDevice peer (Android/Windows),
         // suppress local takeover attempts for 30 s. AirPods frequently bounce back to
         // the releasing device's BT stack (autonomous BT reconnect), which can briefly
@@ -4065,23 +4147,36 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         // takeOver() ~43 s after the yield, causing a fight between the two devices.
         // 30 s covers the typical bounce window; after that, if media is still active
         // on this device the user probably does want to re-claim the AirPods.
-        socket.close()
+        //
+        // Close the AACP L2CAP socket ONLY if it's been opened on this device.
+        // Limited-mode peers (no AACP) still need the rest of this function to run
+        // (sendPause, cooldown, notifyDisconnected, A2DP policy hint) — previously
+        // a `socket.isInitialized` early-return made the whole function a no-op on
+        // limited devices, so REQUEST_DISCONNECT arrived but nothing happened.
+        if (this::socket.isInitialized) {
+            socket.close()
+        }
         Log.d(TAG, "Disconnected from AirPods (CrossDevice handover)")
-        showIsland(
-            this,
-            batteryNotification.getBattery()
-                .find { it.component == BatteryComponent.LEFT }?.level!!.coerceAtMost(
-                    batteryNotification.getBattery()
-                        .find { it.component == BatteryComponent.RIGHT }?.level!!
-                ),
-            IslandType.MOVED_TO_REMOTE
-        )
+        // Battery may be empty on limited devices that never got a battery packet —
+        // skip the island in that case rather than NPE on `!!`.
+        val batteryList = batteryNotification.getBattery()
+        val leftLevel = batteryList.find { it.component == BatteryComponent.LEFT }?.level
+        val rightLevel = batteryList.find { it.component == BatteryComponent.RIGHT }?.level
+        if (leftLevel != null && rightLevel != null) {
+            showIsland(this, leftLevel.coerceAtMost(rightLevel), IslandType.MOVED_TO_REMOTE)
+        }
+        // Pause local playback immediately — don't wait for the A2DP proxy callback.
+        // On limited-mode peers we'd never get the privileged disconnect path anyway,
+        // and the audio system fires AUDIO_BECOMING_NOISY only when the AirPods
+        // actually leave us (seconds later, after the destination's connect() wins).
+        // Pausing here is the only way to stop the podcast from playing into the
+        // void during that window.
+        MediaController.sendPause()
         val bluetoothAdapter = getSystemService(BluetoothManager::class.java).adapter
         bluetoothAdapter.getProfileProxy(this, object : BluetoothProfile.ServiceListener {
             @SuppressLint("MissingPermission")
             override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
                 if (profile == BluetoothProfile.A2DP) {
-                    MediaController.sendPause()
                     // Explicitly drop the A2DP profile connection so AirPods fully
                     // release from this device before the peer (e.g. Windows) connects.
                     // Without this, closing only the AACP socket leaves A2DP up and

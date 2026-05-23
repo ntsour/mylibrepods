@@ -180,8 +180,12 @@ object CrossDeviceClient {
                 ServiceManager.getService()?.markPeerTakeoverAttempt()
                 ServiceManager.getService()?.disconnectForCD()
             }
-            raw.contentEquals(CrossDevicePackets.AIRPODS_CONNECTED.packet) ->
+            raw.contentEquals(CrossDevicePackets.AIRPODS_CONNECTED.packet) -> {
                 CrossDevice.isAvailable = true
+                // Peer explicitly announced ownership — if we were expecting a takeover,
+                // arm the peer-drop cooldown proactively (don't wait for ACL_DISCONNECTED).
+                ServiceManager.getService()?.confirmPeerOwnership()
+            }
             raw.contentEquals(CrossDevicePackets.AIRPODS_DISCONNECTED.packet) ->
                 CrossDevice.isAvailable = false
             raw.contentEquals(CrossDevicePackets.WINDOWS_AUDIO_ACTIVE.packet) ->
