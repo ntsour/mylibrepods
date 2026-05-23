@@ -1,23 +1,129 @@
 # Cross-Device AirPods Handover
 
-This document describes how ProPods coordinates AirPods ownership transfers between
-two paired Android devices. The four device-combination scenarios and the in-range /
-out-of-range sub-cases are all covered.
+---
+
+## What Actually Happens (Plain English)
+
+Imagine you're listening to a podcast on your phone (Pixel) through your AirPods and
+you want to switch to your other phone (Xiaomi) — maybe because you're walking over to
+your desk. Here's what happens step by step, with no technical jargon:
+
+**1. You press play on Xiaomi.**
+Xiaomi notices you want audio. It looks up "do I have the AirPods right now?" — it
+doesn't. But it knows the Pixel does.
+
+**2. Xiaomi tells Pixel: "hand them over."**
+Both phones keep a quiet background connection between them over Bluetooth (not the
+AirPods connection — a separate one). Xiaomi sends a short message through that channel:
+"I need the AirPods, please let go."
+
+**3. Pixel pauses its music and releases.**
+Pixel hears the message, pauses whatever was playing, and tells the Bluetooth stack to
+let go of the AirPods. On a Pixel with Xposed (but without root), this is more of a
+polite request to the stack than a hard cut — but it's usually enough.
+
+**4. Xiaomi reaches out to the AirPods.**
+Xiaomi sends a Bluetooth connection request directly to the AirPods. Because AirPods
+can only be actively connected to one audio source at a time, they drop Pixel and
+accept Xiaomi. This is the same thing that happens when you go to your phone's
+Bluetooth settings and tap "Connect" — the AirPods always accept.
+
+**5. Music resumes automatically.**
+Once the AirPods switch over and audio is routing through Xiaomi, ProPods presses
+play on your behalf. On Xiaomi specifically, some apps (like Pocket Casts) briefly
+pause themselves when the audio device changes — ProPods watches for this and
+presses play again automatically, for up to 15 seconds after the switch, until it's
+confident the audio has settled.
 
 ---
 
-## Glossary
+**What if the phones are too far apart to reach each other?**
+
+If Pixel is out of Bluetooth range when you press play on Xiaomi, step 2 (the
+"hand them over" message) never arrives. But it doesn't matter — because the
+AirPods already dropped their connection to Pixel when the Bluetooth range was lost.
+Xiaomi just reaches out to the AirPods directly and they connect immediately with
+nothing to fight over.
+
+---
+
+**What if neither phone is rooted?**
+
+The handover still works in the common case. The "Connect" request Xiaomi sends to
+the AirPods is the same request the system Bluetooth settings app sends — and
+AirPods always accept it from a paired device. The only scenario where it reliably
+fails is if both phones are non-rooted, in range, and the source phone is still
+holding the connection and hasn't dropped it yet. In that case the user would need
+to manually disconnect on the source phone.
+
+---
+
+## Technical Reference
+
+### Device Capability Tiers
+
+The handover code has three meaningful device tiers — not two. AACP access and
+the ability to force-disconnect A2DP are **independent capabilities**:
+
+| Tier | AACP (L2CAP socket) | `BLUETOOTH_PRIVILEGED` | Example |
+|---|---|---|---|
+| **Full** | ✓ Xposed + `l2c_fcr_hook` | ✓ Rooted or system app | Rooted Pixel |
+| **AACP-only** | ✓ Xposed + `l2c_fcr_hook` | ✗ Not rooted | Pixel w/ LSPosed, no root |
+| **Limited** | ✗ | ✗ | Non-rooted Xiaomi |
+
+**AACP** (the L2CAP socket to the AirPods) requires Xposed and an unlocked
+bootloader, but not root. It gives ownership callbacks and the ability to send
+`OWNS_CONNECTION` control commands to the AirPods.
+
+**`BLUETOOTH_PRIVILEGED`** requires root or system-app installation. It unlocks
+`BluetoothA2dp.disconnect()` and the privileged form of `BluetoothA2dp.connect()`.
+Without it, calling `connect()` still works on most OEM stacks (see below).
+
+**In practice, the Pixel in this project is "AACP-only"** — confirmed by this
+log line from `disconnectForCD()` during a real handover:
+```
+W/AirPodsService: disconnectForCD: no BLUETOOTH_PRIVILEGED, skipping A2DP disconnect
+```
+The Pixel cannot actively force its A2DP link off. It relies on the destination's
+`connect()` displacing it, which the AirPods handle automatically.
+
+---
+
+### Why Unprivileged `connect()` Works on Real Devices
+
+The Android framework marks `BluetoothA2dp.connect()` as requiring
+`BLUETOOTH_PRIVILEGED` (enforced in AOSP Android 12+). However:
+
+- OEM Bluetooth stacks (HyperOS, Pixel's own build) **relax this check** for
+  paired devices initiating connections to themselves. The call returns `true` and
+  the connection proceeds.
+- This is the same API the system Settings app uses — Settings just has the
+  permission by virtue of being a priv-app. On OEM devices, unprivileged apps
+  get the same result anyway.
+- **`disconnect()` is not relaxed in the same way.** Actively kicking another
+  device off an established link still requires privilege on all tested stacks.
+  This is why the Pixel skips the force-disconnect and instead relies on the
+  AirPods dropping it when the destination connects.
+
+The practical implication: on the devices used in this project (Pixel 10 + Xiaomi
+24091RPADG), unprivileged `connect()` succeeds reliably. On a strict AOSP build
+without OEM relaxation it may fail.
+
+---
+
+### Glossary
 
 | Term | Meaning |
 |---|---|
-| **AACP device** | A rooted device (or system app) that has an open L2CAP socket to the AirPods via `AACPManager`. Has `BLUETOOTH_PRIVILEGED` and can force `BluetoothA2dp.connect()` / `disconnect()` through hidden-API reflection. Receives ownership callbacks (`onOwnershipChangeReceived`, `onOwnershipToFalseRequest`). |
-| **Limited-mode device** | Non-rooted. No L2CAP / AACP socket. No `BLUETOOTH_PRIVILEGED`. Can call the un-privileged reflection path for `A2DP.connect()`, which the stack may honour or silently ignore depending on whether another device holds the link. |
-| **RFCOMM channel** | A side-channel Bluetooth serial socket (UUID `1abbb9a4-10e4-4000-a75c-8953c5471342`) used by the two Android peers to coordinate handovers independently of the AirPods connection itself. Managed by `CrossDevice.kt` (server) and `CrossDeviceClient.kt` (client). |
-| **RouteLandPoller** | A 15 s arithmetic-backoff watchdog in `MediaController.kt` that re-issues `sendPlay(force=true)` any time `audioManager.isMusicActive` drops after a takeover — handles app auto-pause on route change (e.g. Pocket Casts on HyperOS). |
+| **AACP** | Application-Agnostic Communication Protocol — the L2CAP socket ProPods opens to the AirPods for full feature access (ownership, ANC, battery, stem config). Requires Xposed + `l2c_fcr_hook`. |
+| **Limited-mode** | Device has no AACP socket. Only standard Bluetooth (A2DP / HFP). No ownership callbacks. Non-rooted Xiaomi is limited-mode in this project. |
+| **`BLUETOOTH_PRIVILEGED`** | Android system permission required for forced `BluetoothA2dp.disconnect()` and the strict form of `connect()`. Granted only to rooted or priv-app installs. |
+| **RFCOMM channel** | A side-channel Bluetooth serial socket between the two Android peers (UUID `1abbb9a4-10e4-4000-a75c-8953c5471342`), used to send handover coordination packets. Independent of the AirPods connection. |
+| **RouteLandPoller** | A 15 s watchdog in `MediaController.kt` that re-issues `sendPlay(force=true)` whenever `audioManager.isMusicActive` drops after a takeover. Handles apps (e.g. Pocket Casts on HyperOS) that auto-pause when the audio device changes. |
 
 ---
 
-## Role Election
+### Role Election
 
 Each device runs a persistent RFCOMM server. To avoid a double-client collision on
 Bluedroid, exactly one device also starts a client connection to the peer:
@@ -35,7 +141,7 @@ unprivileged `A2DP.connect()` attempt fires).
 
 ---
 
-## Packet Reference
+### Packet Reference
 
 Defined in `CrossDevice.kt` as `CrossDevicePackets`:
 
@@ -51,9 +157,9 @@ forwarded on the client socket (`CrossDeviceClient.send`) so both roles receive 
 
 ---
 
-## Handover Scenarios
+### Handover Scenarios
 
-### 1. AACP → AACP (both rooted)
+#### 1. AACP → AACP (both Xposed + rooted)
 
 Both devices have AACP open and `BLUETOOTH_PRIVILEGED`.
 
@@ -76,69 +182,65 @@ Both devices have AACP open and `BLUETOOTH_PRIVILEGED`.
 
 **Peer out of BT range**
 
-- `REQUEST_DISCONNECT` send fails silently (socket write throws; caught in
-  `CrossDevice.kt:~382`).
+- `REQUEST_DISCONNECT` send fails silently (socket write throws; caught in `CrossDevice.kt`).
 - Source A2DP link is already stale (ACL gone), so `connectAudio()` succeeds on
   the first 1 s retry with no contention.
 
 ---
 
-### 2. AACP → Limited (e.g. Pixel → Xiaomi)
+#### 2. AACP-only → Limited (e.g. Pixel w/ Xposed → Xiaomi)
 
-Source is rooted (AACP). Destination is non-rooted, limited-mode.
+Source has AACP but no `BLUETOOTH_PRIVILEGED`. Destination is limited-mode.
 
 **Peer in BT range**
 
 1. Destination: `takeOver("music")`.
 2. Destination: sends `REQUEST_DISCONNECT` via both `CrossDevice.sendRemotePacket` and
-   `CrossDeviceClient.send` (added in commit `4944f43` — necessary because limited devices
-   previously never sent this, leaving the source holding the link).
-3. Source receives it → `disconnectForCD()` + `sendPause()` as in scenario 1.
-4. Destination: `connectAudio()` — un-privileged `BluetoothA2dp.connect()` reflection
-   (no `BLUETOOTH_PRIVILEGED`). **This often races against the source still holding
-   the link**, hence the 1 s / 2.5 s / 4.5 s retry loop in `takeOver()`.
+   `CrossDeviceClient.send` (added in commit `4944f43`).
+3. Source receives it → `disconnectForCD()`:
+   - closes L2CAP socket
+   - attempts `disconnectAudio()` but **skips the force-disconnect** (`no BLUETOOTH_PRIVILEGED`)
+   - `sendPause()` if music was active
+4. Destination: `connectAudio()` — unprivileged `BluetoothA2dp.connect()` reflection.
+   On OEM stacks (HyperOS, Pixel OEM build) this succeeds and the AirPods drop the
+   source. Races the source releasing — hence the 1 s / 2.5 s / 4.5 s retry loop.
 5. Playback recovery:
    - `armPendingMusicTakeover` + `onAudioDevicesAdded` → `sendPlay(force=true)` + RouteLandPoller.
-   - On Xiaomi/HyperOS the A2DP audio stream goes live several seconds *after* the
-     device appears in `AudioDeviceCallback`, so `AirPodsService` also calls
-     `restartRouteLandPoller()` on `A2DP PLAYING_STATE_CHANGED → STATE_PLAYING (10)`.
-   - RouteLandPoller watches the full 15 s (no early-exit on stable playback) to
-     catch Pocket Casts' delayed auto-pause.
+   - On Xiaomi/HyperOS the A2DP stream goes live seconds after the device appears,
+     so `restartRouteLandPoller()` fires again on `A2DP PLAYING_STATE_CHANGED → STATE_PLAYING`.
+   - RouteLandPoller watches the full 15 s to catch Pocket Casts' delayed auto-pause.
 
 **Peer out of BT range**
 
-- REQUEST_DISCONNECT undelivered.
-- Destination's un-privileged `connect()` wins because the source ACL is already dead.
-- Playback recovery proceeds normally.
+- REQUEST_DISCONNECT undelivered; source ACL already dead.
+- Destination's unprivileged `connect()` wins immediately.
 
 ---
 
-### 3. Limited → AACP (e.g. Xiaomi → Pixel)
+#### 3. Limited → AACP-only (e.g. Xiaomi → Pixel w/ Xposed)
 
-Source is limited-mode. Destination is rooted (AACP).
+Source is limited-mode. Destination has AACP but no `BLUETOOTH_PRIVILEGED`.
 
 **Peer in BT range**
 
 1. Destination: `takeOver("music")`.
 2. Destination: sends `REQUEST_DISCONNECT`.
 3. Source receives it → `disconnectForCD()`:
-   - No L2CAP to close (limited-mode has none).
-   - `disconnectAudio()` → `setConnectionPolicy(device, 0)` only — no `BLUETOOTH_PRIVILEGED`,
-     so no forced disconnect; the hint may not be acted on immediately.
-4. Destination: `connectAudio()` with `BLUETOOTH_PRIVILEGED` → forced `connect()`.
-   Even if the source is still holding the link the forced `connect()` wins — AirPods
-   drop the source mid-stream.
-5. Source: `sendPause()` runs if music was active; destination RouteLandPoller handles
-   playback resume as in scenario 1.
+   - no L2CAP to close
+   - `setConnectionPolicy(device, 0)` only (hint, not a hard cut)
+4. Destination: `connectAudio()` — unprivileged `connect()`. On OEM stacks this
+   displaces the source even without the privilege. Source sees `ACL_DISCONNECTED`
+   passively when AirPods drop it.
+5. Source: `sendPause()` runs if music was active; destination RouteLandPoller
+   handles playback resume.
 
 **Peer out of BT range**
 
-- Source link already gone; destination `connectAudio()` succeeds on first attempt,
-  no race.
+- Source link already gone; `connectAudio()` succeeds on first attempt, no race.
 
 ---
 
-### 4. Limited → Limited (both non-rooted)
+#### 4. Limited → Limited (both non-rooted, no Xposed)
 
 Neither device has `BLUETOOTH_PRIVILEGED`.
 
@@ -146,34 +248,34 @@ Neither device has `BLUETOOTH_PRIVILEGED`.
 
 1. Destination: `takeOver("music")`.
 2. Destination: sends `REQUEST_DISCONNECT` (if RFCOMM is up).
-3. Source: `setConnectionPolicy(device, 0)` only — stack hint, not a hard disconnect.
-4. Destination: un-privileged `connect()` reflection. **This fails** while the source
-   still holds the A2DP link. `takeOver()` logs
-   `A2DP.connect (no BLUETOOTH_PRIVILEGED) returned true` — the call appears to
-   succeed but the AirPods do not switch.
-5. **Outcome: handover fails.** User must manually disconnect the source in system
-   Bluetooth settings.
+3. Source: `setConnectionPolicy(device, 0)` only — a stack hint, not a hard disconnect.
+4. Destination: unprivileged `connect()` reflection. On strictly-enforced stacks this
+   **fails** while the source holds the link. On OEM-relaxed stacks it may succeed.
+   `takeOver()` logs `A2DP.connect (no BLUETOOTH_PRIVILEGED) returned true` in either
+   case — `true` means "queued", not "connected".
+5. **Outcome: unreliable.** On tested OEM devices (HyperOS, Pixel OEM build) it
+   usually works. On strict AOSP it fails; user must manually disconnect the source
+   in system Bluetooth settings.
 
 **Peer out of BT range**
 
-- Source ACL is gone; un-privileged `connect()` succeeds unopposed.
-- Playback recovery via RouteLandPoller as normal.
-- **This is the only Limited → Limited path that works reliably.**
+- Source ACL is gone; unprivileged `connect()` succeeds unopposed.
+- **This is the only path guaranteed to work on all Android builds.**
 
 ---
 
-## Summary Matrix
+### Summary Matrix
 
 | Scenario | In-range outcome | Out-of-range outcome |
 |---|---|---|
-| AACP → AACP | Full forced handover; source actively releases | Immediate success; no race |
-| AACP → Limited | Races source; 1 s / 2.5 s / 4.5 s retries usually win | Immediate success |
-| Limited → AACP | Forced `connect()` overrides source regardless | Immediate success |
-| Limited → Limited | **Fails** — unprivileged `connect()` can't override source | Succeeds (source gone) |
+| AACP+privileged → AACP+privileged | Full forced handover; source actively force-disconnects | Immediate success |
+| AACP-only → Limited | Unprivileged `connect()` wins on OEM stacks; retries help | Immediate success |
+| Limited → AACP-only | Unprivileged `connect()` wins on OEM stacks; source can't fight back | Immediate success |
+| Limited → Limited | Unreliable on strict AOSP; works on OEM-relaxed stacks | Always succeeds |
 
 ---
 
-## RouteLandPoller Lifecycle
+### RouteLandPoller Lifecycle
 
 ```
 takeOver("music")
@@ -193,38 +295,39 @@ takeOver("music")
        └─ resets + re-arms the same poller (covers Xiaomi late-stream-start)
 ```
 
-The poller intentionally has **no early-exit on stable playback**. On Xiaomi/HyperOS,
-Pocket Casts can auto-pause 3–4 s after the stream starts — well past any short
-"looks stable" window.
+The poller has **no early-exit on stable playback**. On Xiaomi/HyperOS, Pocket Casts
+can auto-pause 3–4 s after the stream starts — well past any short "looks stable" window.
 
 ---
 
-## Keep-Alive & Post-Handover Cooldown
+### Keep-Alive & Post-Handover Cooldown
 
-- **Keep-alive**: both server (`CrossDevice.kt`) and client (`CrossDeviceClient.kt`)
+- **Keep-alive**: server (`CrossDevice.kt`) and client (`CrossDeviceClient.kt`) each
   send `REQUEST_CONNECTION_STATUS` every 20 s to prevent Android's BT power manager
   from dropping the ACL between handovers.
-- **Peer-drop cooldown**: after yielding the AirPods, `peerDropCooldownUntilMs`
-  is set to `now + 10 s`. During this window the BLE reconnect path is blocked,
-  preventing the yielding device from fighting back while the new owner is still
-  establishing AACP.
+- **Peer-drop cooldown**: after yielding the AirPods, `peerDropCooldownUntilMs` is set
+  to `now + 10 s`. The BLE reconnect path is blocked during this window so the new
+  owner can finish establishing AACP without the source fighting back.
 
 ---
 
-## Known Limitations
+### Known Limitations
 
-1. **Limited → Limited in-range** — handover is impossible without `BLUETOOTH_PRIVILEGED`.
-   Both sides must be rooted for reliable forced takeover.
+1. **Limited → Limited on strict AOSP** — unprivileged `connect()` may be blocked by
+   the Bluetooth service. Works on OEM-relaxed stacks (tested: HyperOS, Pixel OEM).
 
-2. **Identical device names** — role election assigns both devices as SERVER-ONLY.
-   The RFCOMM channel never comes up. All in-range handovers degrade silently:
-   no `REQUEST_DISCONNECT` is delivered, and the unprivileged `connect()` call
-   decides the outcome alone.
+2. **AACP-only source cannot force-disconnect** — without `BLUETOOTH_PRIVILEGED` the
+   source can only hint the stack via `setConnectionPolicy`. The destination's
+   `connect()` displacing it is the actual release mechanism.
 
-3. **Unprivileged `connect()` race (AACP → Limited)** — the retry loop (1 s, 2.5 s,
-   4.5 s) covers most timing windows but is not guaranteed. If the source is slow
-   to release (e.g. HFP teardown races), a 4th retry would help.
+3. **Identical device names** — role election assigns both devices as SERVER-ONLY.
+   RFCOMM channel never comes up; all in-range handovers degrade to unprivileged
+   `connect()` only with no coordination packet.
 
-4. **No explicit handover acknowledgement** — the destination never tells the source
-   "I have the AirPods now." The source infers it from `ACL_DISCONNECTED` +
-   `AUDIO_BECOMING_NOISY` (standard Android) rather than a protocol-level confirmation.
+4. **Unprivileged `connect()` race (any → Limited)** — the retry loop (1 s, 2.5 s,
+   4.5 s) covers most timing windows but is not guaranteed if the source is very slow
+   to release.
+
+5. **No explicit handover acknowledgement** — the destination never confirms to the
+   source "I have the AirPods now." The source infers it from `ACL_DISCONNECTED` +
+   `AUDIO_BECOMING_NOISY` rather than a protocol-level confirmation.
