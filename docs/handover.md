@@ -336,10 +336,54 @@ its audio cuts abruptly rather than being paused first.
 
 ---
 
+### OEM Compatibility — Unprivileged `connect()`
+
+Android 12 tightened `BluetoothA2dp.connect()` to require `BLUETOOTH_PRIVILEGED` at
+the service level. Most OEMs who shipped before that point had apps (including their
+own) relying on unprivileged connect for paired devices, so they quietly preserved the
+old behaviour to avoid breakage. The `disconnect()` side was not relaxed because
+forcibly removing another device from an active link is a different threat model.
+
+| Brand / Stack | Unprivileged `connect()` | Notes |
+|---|---|---|
+| **Google Pixel** (Pixel OEM) | ✅ Works | Confirmed in logcat during this project |
+| **Xiaomi / HyperOS** | ✅ Works | Confirmed in logcat during this project |
+| **Samsung / One UI** | ✅ Likely works | Large third-party app ecosystem depends on it; OEM preserves compat |
+| **Oppo, Vivo, Realme / ColorOS, FuntouchOS** | ⚠️ Uncertain | Same BBK group as OnePlus; moderate AOSP deviation |
+| **OnePlus / OxygenOS** | ⚠️ Uncertain | Close to AOSP, minimal BT changes; may enforce strictly |
+| **Motorola** | ❌ Likely enforces | Near-stock AOSP, minimal BT modifications |
+| **Nokia / Android One** | ❌ Enforces | Pure AOSP |
+| **Sony Xperia** | ❌ Likely enforces | Near-stock with some audio extensions |
+| **Huawei / HarmonyOS** | ❓ Unknown | Entirely custom stack, behaviour unpredictable |
+
+**Market impact:** Samsung and Xiaomi together cover the majority of non-stock Android
+users and are both likely permissive. Motorola and Nokia are popular in the
+budget/near-stock space and are likely strict, but represent a smaller share of the
+target audience for this app.
+
+**Mitigation options for strict stacks:**
+
+1. **Xposed hook on the permission check** — `KotlinModule` already runs inside
+   `BluetoothManagerService` on Xposed devices. Hooking
+   `enforceBluetoothPrivilegedPermission()` in `BluetoothA2dpService` would bypass the
+   check on any device running LSPosed, covering the same population that gets AACP.
+
+2. **Source-drops-first protocol** — if the source reliably drops its A2DP link via
+   `setConnectionPolicy(FORBIDDEN)` before the destination attempts `connect()`, there
+   is nothing to fight over and the call succeeds on all stacks (equivalent to the
+   out-of-range path). The weakness today is that the source drop is not guaranteed
+   without `BLUETOOTH_PRIVILEGED`.
+
+3. **User fallback** — on strict-AOSP devices, tapping Connect in system Bluetooth
+   settings makes the identical API call with `BLUETOOTH_PRIVILEGED` and always works.
+
+---
+
 ### Known Limitations
 
-1. **Limited → Limited on strict AOSP** — unprivileged `connect()` may be blocked by
-   the Bluetooth service. Works on OEM-relaxed stacks (tested: HyperOS, Pixel OEM).
+1. **Unprivileged `connect()` on strict AOSP** — blocked by `BluetoothA2dpService` on
+   Motorola, Nokia, and likely OnePlus. Works on OEM-relaxed stacks (tested: HyperOS,
+   Pixel OEM). See OEM Compatibility table above.
 
 2. **AACP-only source cannot force-disconnect** — without `BLUETOOTH_PRIVILEGED` the
    source can only hint the stack via `setConnectionPolicy`. The destination's
