@@ -130,11 +130,29 @@ class AirPodsViewModel(
     private val _uiState = MutableStateFlow(
         AirPodsUiState(
             deviceName = preferredDeviceName(),
-            aacpAvailable = io.nikos.propods.utils.isAacpCapable() ||
-                io.nikos.propods.utils.XposedState.bluetoothScopeEnabled
+            aacpAvailable = computeAacpAvailable()
         )
     )
     val uiState: StateFlow<AirPodsUiState> = _uiState
+
+    private fun computeAacpAvailable(): Boolean =
+        io.nikos.propods.utils.isAacpCapable() ||
+            io.nikos.propods.utils.XposedState.bluetoothScopeEnabled
+
+    /**
+     * Re-evaluate the AACP capability flag. `XposedState.bluetoothScopeEnabled`
+     * may flip from false → true asynchronously after the Xposed service binds
+     * — which can happen *after* the ViewModel constructor ran. Callers
+     * (MainActivity lifecycle observer, service connect, etc.) should call this
+     * whenever there's a reasonable chance the value changed so the UI un-greys
+     * AACP controls.
+     */
+    fun refreshAacpAvailable() {
+        val now = computeAacpAvailable()
+        if (now != _uiState.value.aacpAvailable) {
+            _uiState.update { it.copy(aacpAvailable = now) }
+        }
+    }
 
     private var isDemoMode = false
     val demoActivated = MutableSharedFlow<Unit>()
