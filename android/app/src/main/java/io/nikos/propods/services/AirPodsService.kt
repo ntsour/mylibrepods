@@ -3325,8 +3325,19 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                             // On some devices (Xiaomi) the A2DP audio stream starts many seconds
                             // after the device is added. Restart the routeLandPoller so it can catch
                             // app auto-pause triggered by the late route change.
-                            Log.d(TAG, "A2DP stream started — restarting routeLandPoller")
-                            io.nikos.propods.utils.MediaController.restartRouteLandPoller()
+                            //
+                            // Gate this on a recent music takeover: without the gate, ANY A2DP
+                            // stream-start event (post-call audio routing, ringtone over A2DP,
+                            // BLE notification chimes, peer device switching audio, etc.)
+                            // re-arms the poller and hammers play keys — Pocket Casts then
+                            // auto-resumes "by itself" minutes after the user stopped using it.
+                            val sinceTakeover = System.currentTimeMillis() - lastMusicTakeoverMs
+                            if (lastMusicTakeoverMs != 0L && sinceTakeover < MUSIC_TAKEOVER_WINDOW_MS) {
+                                Log.d(TAG, "A2DP stream started ${sinceTakeover}ms after takeOver — restarting routeLandPoller")
+                                io.nikos.propods.utils.MediaController.restartRouteLandPoller()
+                            } else {
+                                Log.d(TAG, "A2DP stream started but no recent music takeover (${sinceTakeover}ms) — NOT re-arming routeLandPoller to avoid spurious auto-play")
+                            }
                         }
                     }
                 }
