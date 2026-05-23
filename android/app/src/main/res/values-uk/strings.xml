@@ -43,9 +43,9 @@
     <string name="add_widget">Додати віджет</string>
     <string name="noise_control_widget_description">Керуйте режимом шумоконтролю прямо з головного екрана.</string>
     <string name="island_connected_text">Підключено</string>
-    <string name="island_connected_remote_text">Підключено до Linux</string>
+    <string name="island_connected_remote_text">Підключено до іншого пристрою</string>
     <string name="island_taking_over_text">Підключено</string>
-    <string name="island_moved_to_remote_text">Переміщено до Linux</string>
+    <string name="island_moved_to_remote_text">Переміщено на інший пристрій</string>
     <string name="island_moved_to_other_device_text">Переміщено до %1$s</string>
     <string name="island_moved_to_other_device_reversed_text">Перепідключитися через повідомлення</string>
     <string name="head_tracking">Відстеження Голови</string>

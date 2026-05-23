@@ -42,9 +42,9 @@
     <string name="add_widget">添加小组件</string>
     <string name="noise_control_widget_description">直接在主屏幕上控制听音模式。</string>
     <string name="island_connected_text">已连接</string>
-    <string name="island_connected_remote_text">已连接到 Linux</string>
+    <string name="island_connected_remote_text">已连接到其他设备</string>
     <string name="island_taking_over_text">已连接</string>
-    <string name="island_moved_to_remote_text">已切换到 Linux</string>
+    <string name="island_moved_to_remote_text">已切换到其他设备</string>
     <string name="island_moved_to_other_device_text">已切换到 %1$s</string>
     <string name="island_moved_to_other_device_reversed_text">从通知中重新连接</string>
     <string name="head_tracking">头部追踪</string>

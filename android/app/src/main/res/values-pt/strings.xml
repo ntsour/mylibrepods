@@ -43,9 +43,9 @@
     <string name="add_widget">Adicionar widget</string>
     <string name="noise_control_widget_description">Controle o Modo de Controle de Ruído diretamente da sua Tela Inicial.</string>
     <string name="island_connected_text">Conectado</string>
-    <string name="island_connected_remote_text">Conectado ao Linux</string>
+    <string name="island_connected_remote_text">Conectado a outro dispositivo</string>
     <string name="island_taking_over_text">Conectado</string>
-    <string name="island_moved_to_remote_text">Movido para Linux</string>
+    <string name="island_moved_to_remote_text">Movido para outro dispositivo</string>
     <string name="island_moved_to_other_device_text">Movido para %1$s</string>
     <string name="island_moved_to_other_device_reversed_text">Reconectar pela notificação</string>
     <string name="head_tracking">Rastreamento de Cabeça</string>

@@ -43,9 +43,9 @@
     <string name="add_widget">Widget ekle</string>
     <string name="noise_control_widget_description">Gürültü Kontrol Modunu doğrudan Ana Ekranınızdan kontrol edin.</string>
     <string name="island_connected_text">Bağlı</string>
-    <string name="island_connected_remote_text">Linux\'a bağlı</string>
+    <string name="island_connected_remote_text">Başka bir cihaza bağlı</string>
     <string name="island_taking_over_text">Bağlı</string>
-    <string name="island_moved_to_remote_text">Linux\'a taşındı</string>
+    <string name="island_moved_to_remote_text">Başka bir cihaza taşındı</string>
     <string name="island_moved_to_other_device_text">%1$s cihazına taşındı</string>
     <string name="island_moved_to_other_device_reversed_text">Bildirimden yeniden bağlan</string>
     <string name="head_tracking">Kafa Takibi</string>
