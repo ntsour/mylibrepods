@@ -396,9 +396,18 @@ object MediaController {
         sessionCallbacks[ctrl] = cb
 
         // If session is already PLAYING when we attach (e.g. app launched before us),
-        // honor it once. Otherwise we'd miss apps that started before MediaController init.
+        // honor it — but ONLY if audio is actually active on this device right now.
+        // A MediaSession can be in STATE_PLAYING globally while audio is routed to a
+        // peer device (e.g. Pocket Casts playing on Pixel while ProPods is being
+        // restarted on Xiaomi); honoring the initial state in that case would steal
+        // the AirPods from whoever's actually playing. audioManager.isMusicActive
+        // reflects local audio activity and distinguishes the two cases cleanly.
         if (startState == PlaybackState.STATE_PLAYING) {
-            handler.post { onSessionStartedPlaying(ctrl) }
+            if (audioManager.isMusicActive) {
+                handler.post { onSessionStartedPlaying(ctrl) }
+            } else {
+                Log.d("MediaController", "Tracking $pkg in STATE_PLAYING but no local music active — skipping initial honor (probably playing on peer)")
+            }
         }
     }
 
