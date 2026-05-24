@@ -63,6 +63,17 @@ object MediaController {
     private var lastPlayWithReplay: Boolean = false
     private var lastPlayTime: Long = 0L
 
+    // Wall-clock (SystemClock.uptimeMillis) of the most recent moment the
+    // AudioManager reported isMusicActive=true. Used to suppress spurious
+    // takeOver("music") triggers when audio was already playing a moment ago
+    // — a transient dip (notification chime ending, MediaSession internal
+    // state blip, brief audio-focus shift) should NOT be treated like a
+    // fresh "user pressed play" event. A genuine play-after-pause comes
+    // after many seconds of inactivity; anything within ~3 s is noise.
+    @Volatile
+    private var lastMusicActiveAt: Long = 0L
+    private val MUSIC_ACTIVE_RECENT_MS: Long = 3_000L
+
     // Set to the AirPods MAC every time we call takeOver("music"). The
     // AudioDeviceCallback below fires only when an A2DP device with THIS MAC
     // becomes the audio output — no time-window guessing. Cleared on:
@@ -410,6 +421,15 @@ object MediaController {
             Log.d("MediaController", "  ignoring: iPausedTheMedia=true (we paused this ourselves)")
             return
         }
+        // Recent-activity gate: if music was just playing a moment ago, this
+        // MediaSession state transition is an internal app blip (Pocket Casts
+        // background refresh, notification update, etc.) — not a fresh user
+        // play press. Suppress to prevent spurious sendPlay storms.
+        val sinceMusicActive = now - lastMusicActiveAt
+        if (lastMusicActiveAt != 0L && sinceMusicActive < MUSIC_ACTIVE_RECENT_MS) {
+            Log.d("MediaController", "  ignoring: music was active ${sinceMusicActive}ms ago — likely a session-state blip, not a fresh play press")
+            return
+        }
         Log.d("MediaController", "  → PROCEEDING: requesting takeOver(\"music\") from MediaSession event")
         ServiceManager.getService()?.takeOver("music")
     }
@@ -494,13 +514,26 @@ object MediaController {
             val a2dpInFlux = io.nikos.propods.services.AirPodsService.lastA2dpStateChangeMs > 0 &&
                 a2dpFluxAgeMs < io.nikos.propods.services.AirPodsService.A2DP_STATE_FLUX_WINDOW_MS
 
+            // Read the previous freshness value BEFORE we update it below.
+            val sinceMusicActive = now - lastMusicActiveAt
+            val musicRecentlyActive = lastMusicActiveAt != 0L &&
+                sinceMusicActive < MUSIC_ACTIVE_RECENT_MS
+
             if (isActive && hasNewMusicOrMovie) {
                 if (lastKnownIsMusicActive != true) {
-                    if (a2dpInFlux) {
-                        Log.d("MediaController", "Music/movie is active BUT A2DP in flux (${a2dpFluxAgeMs}ms since change) — suppressing takeOver, peer is likely taking over")
-                    } else {
-                        Log.d("MediaController", "Music/movie is active; requesting takeOver")
-                        ServiceManager.getService()?.takeOver("music")
+                    when {
+                        musicRecentlyActive -> Log.d(
+                            "MediaController",
+                            "Music/movie is active but it was already active ${sinceMusicActive}ms ago — transient dip, suppressing takeOver"
+                        )
+                        a2dpInFlux -> Log.d(
+                            "MediaController",
+                            "Music/movie is active BUT A2DP in flux (${a2dpFluxAgeMs}ms since change) — suppressing takeOver, peer is likely taking over"
+                        )
+                        else -> {
+                            Log.d("MediaController", "Music/movie is active; requesting takeOver")
+                            ServiceManager.getService()?.takeOver("music")
+                        }
                     }
                 }
             } else if (!isActive && hasNewMusicOrMovie) {
@@ -520,12 +553,22 @@ object MediaController {
                         val fluxAgeMsNow = System.currentTimeMillis() - io.nikos.propods.services.AirPodsService.lastA2dpStateChangeMs
                         val inFluxNow = io.nikos.propods.services.AirPodsService.lastA2dpStateChangeMs > 0 &&
                             fluxAgeMsNow < io.nikos.propods.services.AirPodsService.A2DP_STATE_FLUX_WINDOW_MS
-                        if (inFluxNow) {
-                            Log.d("MediaController", "Delayed re-check: music active BUT A2DP in flux (${fluxAgeMsNow}ms) — suppressing takeOver")
-                        } else {
-                            Log.d("MediaController", "Delayed re-check: music now active, requesting takeOver")
-                            ServiceManager.getService()?.takeOver("music")
-                            lastKnownIsMusicActive = true
+                        // Recent-activity gate: even in the delayed path, suppress if
+                        // music was already active just before this callback.
+                        val nowDelayed = SystemClock.uptimeMillis()
+                        val sinceActive = nowDelayed - lastMusicActiveAt
+                        val recent = lastMusicActiveAt != 0L && sinceActive < MUSIC_ACTIVE_RECENT_MS
+                        when {
+                            recent -> Log.d(
+                                "MediaController",
+                                "Delayed re-check: music now active but was active ${sinceActive}ms ago — transient dip, suppressing takeOver"
+                            )
+                            inFluxNow -> Log.d("MediaController", "Delayed re-check: music active BUT A2DP in flux (${fluxAgeMsNow}ms) — suppressing takeOver")
+                            else -> {
+                                Log.d("MediaController", "Delayed re-check: music now active, requesting takeOver")
+                                ServiceManager.getService()?.takeOver("music")
+                                lastKnownIsMusicActive = true
+                            }
                         }
                     } else {
                         Log.d("MediaController", "Delayed re-check: still not music-active; isMusicActive=${audioManager.isMusicActive}")
@@ -534,6 +577,12 @@ object MediaController {
             }
 
             lastKnownIsMusicActive = hasNewMusicOrMovie && isActive
+
+            // Track the most recent moment music was observed active. The gates
+            // above used the PREVIOUS value of this; update it now for future
+            // callbacks. Compare against `now` not isActive snapshot — this
+            // bookkeeping must happen on every callback while music plays.
+            if (isActive) lastMusicActiveAt = now
         }
     }
 
