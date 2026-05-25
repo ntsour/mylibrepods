@@ -4,11 +4,12 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace librepods {
 
 struct Settings {
-    std::optional<std::uint64_t> androidAddress;
+    std::vector<std::uint64_t>   androidAddresses;  // one entry per paired Android peer
     std::optional<std::uint64_t> airpodsAddress;
 };
 

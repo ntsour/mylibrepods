@@ -9,14 +9,16 @@
 #include <winrt/Windows.Storage.Streams.h>
 
 #include "AirPodsConnector.hpp"
-#include "BluetoothRfcommClient.hpp"
 #include "HandoverController.hpp"
 #include "Logger.hpp"
 #include "MediaPlaybackWatcher.hpp"
+#include "PeerRegistry.hpp"
 #include "SettingsStore.hpp"
+#include "TeamsCallWatcher.hpp"
 #include "TrayIcon.hpp"
 #include "crossdevice_protocol.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <memory>
 #include <optional>
@@ -38,7 +40,9 @@ std::wstring stateLabel(OwnershipState s) {
     }
 }
 
-std::optional<std::uint64_t> discoverAndroidPeer() {
+// Returns ALL paired devices that advertise the CrossDevice RFCOMM UUID.
+std::vector<std::uint64_t> discoverAndroidPeers() {
+    std::vector<std::uint64_t> found;
     try {
         winrt::guid rfcommGuid {
             0x1abbb9a4u, 0x10e4u, 0x4000u,
@@ -46,22 +50,22 @@ std::optional<std::uint64_t> discoverAndroidPeer() {
         };
         auto rfcommId = RfcommServiceId::FromUuid(rfcommGuid);
 
-        // Fast path: SDP cache already contains the UUID.
+        // Fast path: collect everything the SDP cache already knows about.
         auto selector = RfcommDeviceService::GetDeviceSelector(rfcommId);
         auto cachedHits = DeviceInformation::FindAllAsync(selector).get();
-        if (cachedHits.Size() > 0) {
-            auto service = RfcommDeviceService::FromIdAsync(cachedHits.GetAt(0).Id()).get();
-            if (service && service.Device()) {
+        for (auto&& hit : cachedHits) {
+            try {
+                auto service = RfcommDeviceService::FromIdAsync(hit.Id()).get();
+                if (!service || !service.Device()) continue;
                 auto bdev = service.Device();
                 log::info("Discovered Android peer (cached SDP): {} ({})",
                     to_string(bdev.Name()),
                     SettingsStore::formatBluetoothAddress(bdev.BluetoothAddress()));
-                return bdev.BluetoothAddress();
-            }
+                found.push_back(bdev.BluetoothAddress());
+            } catch (...) {}
         }
 
-        // Slow path: enumerate paired classic-Bluetooth devices and query SDP uncached.
-        log::info("SDP cache empty; scanning all paired Bluetooth devices for CrossDevice service...");
+        // Slow path: probe paired devices not yet in the SDP cache.
         auto pairedSelector = BluetoothDevice::GetDeviceSelectorFromPairingState(true);
         auto paired = DeviceInformation::FindAllAsync(pairedSelector).get();
         log::debug("Paired classic-Bluetooth devices: {}", paired.Size());
@@ -70,6 +74,9 @@ std::optional<std::uint64_t> discoverAndroidPeer() {
             try {
                 auto bdev = BluetoothDevice::FromIdAsync(info.Id()).get();
                 if (!bdev) continue;
+                // Skip addresses already collected from the cache.
+                if (std::find(found.begin(), found.end(), bdev.BluetoothAddress()) != found.end())
+                    continue;
                 log::debug("  Probing {} ({})...",
                     to_string(bdev.Name()),
                     SettingsStore::formatBluetoothAddress(bdev.BluetoothAddress()));
@@ -78,23 +85,23 @@ std::optional<std::uint64_t> discoverAndroidPeer() {
                     log::info("Discovered Android peer (uncached SDP): {} ({})",
                         to_string(bdev.Name()),
                         SettingsStore::formatBluetoothAddress(bdev.BluetoothAddress()));
-                    return bdev.BluetoothAddress();
+                    found.push_back(bdev.BluetoothAddress());
                 }
             } catch (const hresult_error& e) {
                 log::debug("    skipped (probe failed: {})", to_string(e.message()));
-                continue;
             }
         }
 
-        log::warn("No paired device advertises CrossDevice UUID. "
-                  "Make sure: (1) the phone is paired with this PC, "
-                  "(2) Handover is ON in the LibrePods Android app.");
-        return std::nullopt;
+        if (found.empty()) {
+            log::warn("No paired device advertises CrossDevice UUID. "
+                      "Make sure: (1) the phone is paired with this PC, "
+                      "(2) Handover is ON in the LibrePods Android app.");
+        }
     } catch (const hresult_error& e) {
         log::error("Peer discovery failed: 0x{:08X} {}",
             (std::uint32_t)e.code().value, to_string(e.message()));
-        return std::nullopt;
     }
+    return found;
 }
 
 std::optional<std::uint64_t> discoverAirPods() {
@@ -144,9 +151,10 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     SettingsStore store;
     Settings settings = store.load();
 
-    if (!settings.androidAddress) {
-        if (auto a = discoverAndroidPeer()) {
-            settings.androidAddress = a;
+    if (settings.androidAddresses.empty()) {
+        auto discovered = discoverAndroidPeers();
+        if (!discovered.empty()) {
+            settings.androidAddresses = std::move(discovered);
             store.save(settings);
         }
     }
@@ -158,9 +166,10 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     }
 
     AirPodsConnector airpods{settings.airpodsAddress.value_or(0)};
-    BluetoothRfcommClient rfcomm;
+    PeerRegistry peers;
     MediaPlaybackWatcher media;
-    HandoverController controller{rfcomm, airpods, media};
+    HandoverController controller{peers, airpods, media};
+    TeamsCallWatcher teamsWatcher;
     TrayIcon tray;
 
     if (!tray.create(hInstance)) return 1;
@@ -170,10 +179,19 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
         tray.setStatus(stateLabel(s));
     });
 
-    rfcomm.setOnPacket([&controller](std::span<const std::uint8_t> data) {
+    // Provide live status to the tray menu (queried each time the menu opens).
+    tray.setStatusProvider([&]() -> TrayIcon::StatusInfo {
+        TrayIcon::StatusInfo info;
+        info.airpodsConnected = airpods.isClassicallyConnected();
+        for (auto& p : peers.peerInfos())
+            info.peers.push_back({p.name, p.connected});
+        return info;
+    });
+
+    peers.setOnPacket([&controller](std::span<const std::uint8_t> data) {
         controller.onIncomingPacket(data);
     });
-    rfcomm.setOnState([&controller](bool connected) {
+    peers.setOnState([&controller](bool connected) {
         controller.onPeerConnectionChanged(connected);
     });
 
@@ -181,19 +199,38 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
         controller.onMediaPlayingChanged(playing);
     });
 
+    // WASAPI-based trigger (Teams calls, VLC, …) feeds the same handover path
+    // as the GSMTC media callback. The HandoverController's debounce and
+    // anti-pingpong guards apply equally to both paths.
+    teamsWatcher.setOnTriggered([&controller]() {
+        controller.onMediaPlayingChanged(true);
+    });
+
     tray.setMenuHandler([&](int cmd) {
         switch (cmd) {
             case TrayIcon::kCmdQuit:
                 tray.postQuit();
                 break;
-            case TrayIcon::kCmdPairAndroid:
-                if (auto a = discoverAndroidPeer()) {
-                    settings.androidAddress = a;
-                    store.save(settings);
-                    rfcomm.stop();
-                    rfcomm.start(*a);
+            case TrayIcon::kCmdPairAndroid: {
+                // Discover ALL devices advertising the CrossDevice UUID and add any new ones.
+                auto discovered = discoverAndroidPeers();
+                auto& addrs = settings.androidAddresses;
+                bool anyAdded = false;
+                for (auto a : discovered) {
+                    if (std::find(addrs.begin(), addrs.end(), a) == addrs.end()) {
+                        addrs.push_back(a);
+                        peers.addPeer(a);  // starts immediately (registry is running)
+                        log::info("Added new Android peer: {}",
+                            SettingsStore::formatBluetoothAddress(a));
+                        anyAdded = true;
+                    } else {
+                        log::info("Android peer {} already registered",
+                            SettingsStore::formatBluetoothAddress(a));
+                    }
                 }
+                if (anyAdded) store.save(settings);
                 break;
+            }
             case TrayIcon::kCmdPairAirPods:
                 if (auto a = discoverAirPods()) {
                     settings.airpodsAddress = a;
@@ -204,17 +241,22 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
         }
     });
 
-    if (settings.androidAddress) {
-        rfcomm.start(*settings.androidAddress);
+    for (auto addr : settings.androidAddresses)
+        peers.addPeer(addr);
+
+    if (!settings.androidAddresses.empty()) {
+        peers.start();
     } else {
-        log::warn("No Android peer configured. Use tray menu \"Pair with Android...\" once it is paired in Windows.");
+        log::warn("No Android peers configured. Use tray menu \"Add Android peer...\" once a device is paired in Windows.");
     }
 
     media.start();
+    teamsWatcher.start();
 
     tray.runMessageLoop();
 
+    teamsWatcher.stop();
     media.stop();
-    rfcomm.stop();
+    peers.stop();
     return 0;
 }

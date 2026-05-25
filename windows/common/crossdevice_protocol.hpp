@@ -30,7 +30,8 @@ enum class Incoming {
     Unknown,
     AirPodsConnected,
     AirPodsDisconnected,
-    RequestDisconnect,
+    RequestDisconnect,   // peer wants AirPods for music; we may reject if in a call
+    RequestHandover,     // peer wants AirPods for a call; we MUST release (call priority)
     RequestBatteryBytes,
     RequestAncBytes,
     RequestConnectionStatus,
@@ -49,7 +50,7 @@ inline bool startsWith4(std::span<const std::uint8_t> data, const Packet4& p) {
 
 inline Incoming classify(std::span<const std::uint8_t> data) {
     if (equals4(data, kRequestDisconnect))        return Incoming::RequestDisconnect;
-    if (equals4(data, kRequestHandover))          return Incoming::RequestDisconnect;
+    if (equals4(data, kRequestHandover))          return Incoming::RequestHandover;
     if (equals4(data, kAirPodsConnected))         return Incoming::AirPodsConnected;
     if (equals4(data, kAirPodsDisconnected))      return Incoming::AirPodsDisconnected;
     if (equals4(data, kRequestBatteryBytes))      return Incoming::RequestBatteryBytes;

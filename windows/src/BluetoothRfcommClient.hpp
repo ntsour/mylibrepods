@@ -18,7 +18,9 @@ namespace librepods {
 class BluetoothRfcommClient {
 public:
     using PacketCallback = std::function<void(std::span<const std::uint8_t>)>;
-    using StateCallback = std::function<void(bool connected)>;
+    using StateCallback  = std::function<void(bool connected)>;
+    // Fired once per successful connection with the BT device's display name.
+    using NameCallback   = std::function<void(const std::string& name)>;
 
     BluetoothRfcommClient();
     ~BluetoothRfcommClient();
@@ -27,7 +29,8 @@ public:
     BluetoothRfcommClient& operator=(const BluetoothRfcommClient&) = delete;
 
     void setOnPacket(PacketCallback cb) { m_onPacket = std::move(cb); }
-    void setOnState(StateCallback cb) { m_onState = std::move(cb); }
+    void setOnState(StateCallback  cb) { m_onState  = std::move(cb); }
+    void setOnName (NameCallback   cb) { m_onName   = std::move(cb); }
 
     void start(std::uint64_t peerAddress);
     void stop();
@@ -48,7 +51,8 @@ private:
     winrt::Windows::Storage::Streams::DataWriter m_writer{nullptr};
 
     PacketCallback m_onPacket;
-    StateCallback m_onState;
+    StateCallback  m_onState;
+    NameCallback   m_onName;
 };
 
 }

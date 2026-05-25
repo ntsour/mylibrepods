@@ -109,9 +109,10 @@ void BluetoothRfcommClient::runLoop(std::uint64_t peerAddress) {
             if (!device) {
                 throw std::runtime_error("BluetoothDevice not found (is it paired?)");
             }
+            std::string deviceName = to_string(device.Name());
             log::debug("Got BluetoothDevice: name='{}' connectionStatus={}",
-                to_string(device.Name()),
-                (int)device.ConnectionStatus());
+                deviceName, (int)device.ConnectionStatus());
+            if (m_onName) m_onName(deviceName);
 
             auto rfcommId = RfcommServiceId::FromUuid(serviceUuid);
             log::debug("Enumerating RFCOMM services for UUID...");

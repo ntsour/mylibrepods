@@ -26,10 +26,35 @@ public:
     // using the AirPods for audio output right now).
     bool hasActiveAudioSessions();
 
+    // True when at least one active audio session on the AirPods render endpoint
+    // is owned by a known real-time communications application (Teams, Zoom,
+    // Discord, Slack, WebEx). Used as the gate for rejecting peer-initiated
+    // kRequestDisconnect packets: we only protect *calls* from being snatched
+    // away mid-conversation, not passive media (YouTube, Spotify) that the user
+    // is happy to lose if they're moving the AirPods to another device.
+    bool hasActiveCallSessions();
+
     // Make the AirPods the default audio output (render) and input (capture) device
-    // at all roles (Console/Multimedia/Communications). Polls for up to ~4 seconds
-    // because audio endpoints register asynchronously after the ACL link comes up.
+    // at all roles (Console/Multimedia/Communications).
+    //
+    // Event-driven: registers a process-wide IMMNotificationClient on first call
+    // and arms it for 120s. When the audio system promotes the AirPods endpoint
+    // to DEVICE_STATE_ACTIVE (typically a few seconds after the BT classical
+    // link is up and A2DP has negotiated), the callback applies the routing
+    // and broadcasts WM_WININICHANGE so apps switch over.
+    //
+    // Returns immediately (no blocking poll). Returns true if either routing
+    // applied synchronously (endpoint already ACTIVE) or the notifier is armed
+    // for a future apply.
     bool setAsDefaultAudioDevice();
+
+    // Toggle the endpoint notifier's "persistent" mode. When true, the notifier
+    // stays armed indefinitely and re-arms after each successful routing — so
+    // if AirPods bounce off Windows mid-call (Apple auto-switch, brief blip)
+    // and come back, routing reapplies automatically without another
+    // setAsDefaultAudioDevice() call. Set this to true while we own the AirPods
+    // (OwnershipState::LocalPc) and false when ownership leaves us.
+    void setPersistentArm(bool persistent);
 
 private:
     std::uint64_t m_address;
