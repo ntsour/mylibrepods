@@ -68,6 +68,10 @@ object ElevenLabsEngine {
     @Volatile private var focusRequest: AudioFocusRequest? = null
     private val speaking = AtomicBoolean(false)
     @Volatile private var playbackLatch: java.util.concurrent.CountDownLatch? = null
+    // Timestamp of the last onCompletion event (-1 = none/cleared). Used to keep
+    // isSpeaking() true during A2DP buffer drain after MediaPlayer reports done.
+    private val lastDoneAt = java.util.concurrent.atomic.AtomicLong(-1L)
+    private const val A2DP_GRACE_MS = 1_500L
 
     // -------------------------------------------------------------------------
     // Public API
@@ -141,7 +145,7 @@ object ElevenLabsEngine {
                 val latch = java.util.concurrent.CountDownLatch(1)
                 playbackLatch = latch
                 playFile(ctx, tmp,
-                    onDone = { latch.countDown(); speaking.set(false); onDone() },
+                    onDone = { lastDoneAt.set(System.currentTimeMillis()); latch.countDown(); speaking.set(false); onDone() },
                     onError = { reason ->
                         latch.countDown()
                         speaking.set(false)
@@ -163,12 +167,19 @@ object ElevenLabsEngine {
     fun stop() {
         generation.incrementAndGet()   // invalidates all queued tasks
         speaking.set(false)
+        lastDoneAt.set(-1L)            // clear A2DP grace so next press is play/pause
         playbackLatch?.countDown()     // unblock executor thread if stuck on latch.await()
         stopPlayer()
     }
 
-    /** Returns true if an utterance is currently speaking or fetching. */
-    fun isSpeaking(): Boolean = speaking.get()
+    /** Returns true if an utterance is currently speaking, fetching, or within the
+     *  A2DP drain grace window after completion (MediaPlayer.onCompletion fires
+     *  before audio reaches AirPods, so we stay "speaking" for a short window). */
+    fun isSpeaking(): Boolean {
+        if (speaking.get()) return true
+        val t = lastDoneAt.get()
+        return t >= 0L && System.currentTimeMillis() - t < A2DP_GRACE_MS
+    }
 
     private fun stopPlayer() {
         try { player?.stop() } catch (_: Exception) {}
