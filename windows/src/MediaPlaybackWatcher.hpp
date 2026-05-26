@@ -27,6 +27,11 @@ public:
     void start();
     void stop();
 
+    // Returns the SourceAppUserModelId of the first session currently in the
+    // Playing state, or empty string if nothing is playing. Used for diagnostic
+    // popups during the viability spike.
+    std::string currentAppId() const;
+
     // Send transport commands to the OS's currently-focused media session. Used
     // by HandoverController to pause/resume local media around a handover so
     // audio doesn't briefly leak through PC speakers during the ACL switch.
@@ -40,6 +45,14 @@ public:
     // Last-resort pause: send global media pause key. Works for any app that
     // respects media keys (most do). Returns true.
     bool tryPauseViaMediaKey();
+
+    // Multi-window pause: enumerate top-level browser windows (Chrome, Edge,
+    // Firefox) and post APPCOMMAND_MEDIA_PLAY_PAUSE to each. Catches YouTube
+    // on a non-focused window/monitor that the focused SendInput in
+    // tryPauseViaMediaKey misses (browser only registers one GSMTC session and
+    // VK_MEDIA_PLAY_PAUSE only reaches the foreground window). Returns the
+    // number of windows the message was posted to.
+    int tryPauseAllBrowserWindows();
 
 private:
     void rebuildSubscriptions();

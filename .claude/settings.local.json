@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(adb devices -l)",
+      "Bash(adb devices *)",
+      "PowerShell($cmake = \"C:\\\\Program Files \\(x86\\)\\\\Microsoft Visual Studio\\\\2022\\\\BuildTools\\\\Common7\\\\IDE\\\\CommonExtensions\\\\Microsoft\\\\CMake\\\\CMake\\\\bin\\\\cmake.exe\"; if \\(Test-Path $cmake\\) { & $cmake --version } else { Get-ChildItem -Path \"C:\\\\Program Files \\(x86\\)\\\\Microsoft Visual Studio\\\\2022\\\\BuildTools\" -Filter \"cmake.exe\" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 3 -ExpandProperty FullName })"
+    ]
+  }
+}

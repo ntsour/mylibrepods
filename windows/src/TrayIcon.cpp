@@ -92,13 +92,49 @@ void TrayIcon::showContextMenu(HWND hwnd) {
     POINT pt;
     GetCursorPos(&pt);
 
+    // Fetch live status just before the menu opens.
+    StatusInfo status;
+    if (m_statusProvider) status = m_statusProvider();
+
     HMENU menu = CreatePopupMenu();
-    InsertMenuW(menu, static_cast<UINT>(-1), MF_BYPOSITION | MF_DISABLED | MF_GRAYED, 0u, m_statusText.c_str());
+
+    // ── AirPods ──────────────────────────────────────────────────────────────
+    // Ownership line (e.g. "AirPods: on this PC")
+    InsertMenuW(menu, static_cast<UINT>(-1),
+        MF_BYPOSITION | MF_STRING | MF_DISABLED | MF_GRAYED,
+        0u, m_statusText.c_str());
+
+    // Physical BT connection state with checkmark when connected.
+    const wchar_t* airpodsDetail = status.airpodsConnected
+        ? L"AirPods connected (Bluetooth)"
+        : L"AirPods not connected";
+    UINT airpodsFlags = MF_BYPOSITION | MF_STRING | MF_DISABLED | MF_GRAYED;
+    if (status.airpodsConnected) airpodsFlags |= MF_CHECKED;
+    InsertMenuW(menu, static_cast<UINT>(-1), airpodsFlags, 0u, airpodsDetail);
+
     InsertMenuW(menu, static_cast<UINT>(-1), MF_BYPOSITION | MF_SEPARATOR, 0u, nullptr);
-    InsertMenuW(menu, static_cast<UINT>(-1), MF_BYPOSITION | MF_STRING, static_cast<UINT_PTR>(kCmdPairAndroid), L"Pair with Android...");
-    InsertMenuW(menu, static_cast<UINT>(-1), MF_BYPOSITION | MF_STRING, static_cast<UINT_PTR>(kCmdPairAirPods), L"Select AirPods...");
+
+    // ── Android peers ─────────────────────────────────────────────────────────
+    if (!status.peers.empty()) {
+        InsertMenuW(menu, static_cast<UINT>(-1),
+            MF_BYPOSITION | MF_STRING | MF_DISABLED | MF_GRAYED,
+            0u, L"Android peers:");
+        for (auto& peer : status.peers) {
+            UINT peerFlags = MF_BYPOSITION | MF_STRING | MF_DISABLED | MF_GRAYED;
+            if (peer.connected) peerFlags |= MF_CHECKED;
+            InsertMenuW(menu, static_cast<UINT>(-1), peerFlags, 0u, peer.name.c_str());
+        }
+        InsertMenuW(menu, static_cast<UINT>(-1), MF_BYPOSITION | MF_SEPARATOR, 0u, nullptr);
+    }
+
+    // ── Actions ───────────────────────────────────────────────────────────────
+    InsertMenuW(menu, static_cast<UINT>(-1), MF_BYPOSITION | MF_STRING,
+        static_cast<UINT_PTR>(kCmdPairAndroid), L"Add Android peer...");
+    InsertMenuW(menu, static_cast<UINT>(-1), MF_BYPOSITION | MF_STRING,
+        static_cast<UINT_PTR>(kCmdPairAirPods), L"Select AirPods...");
     InsertMenuW(menu, static_cast<UINT>(-1), MF_BYPOSITION | MF_SEPARATOR, 0u, nullptr);
-    InsertMenuW(menu, static_cast<UINT>(-1), MF_BYPOSITION | MF_STRING, static_cast<UINT_PTR>(kCmdQuit), L"Quit");
+    InsertMenuW(menu, static_cast<UINT>(-1), MF_BYPOSITION | MF_STRING,
+        static_cast<UINT_PTR>(kCmdQuit), L"Quit");
 
     SetForegroundWindow(hwnd);
     TrackPopupMenu(menu, TPM_BOTTOMALIGN | TPM_LEFTALIGN, pt.x, pt.y, 0, hwnd, nullptr);

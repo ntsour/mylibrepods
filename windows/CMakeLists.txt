@@ -38,6 +38,8 @@ set(SRC
     src/HandoverController.cpp
     src/TrayIcon.cpp
     src/SettingsStore.cpp
+    src/TeamsCallWatcher.cpp
+    src/PeerRegistry.cpp
 )
 
 set(HDR
@@ -48,6 +50,8 @@ set(HDR
     src/HandoverController.hpp
     src/TrayIcon.hpp
     src/SettingsStore.hpp
+    src/TeamsCallWatcher.hpp
+    src/PeerRegistry.hpp
     src/Logger.hpp
 )
 

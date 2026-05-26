@@ -110,6 +110,19 @@ bool MediaPlaybackWatcher::anyPlaying() const {
     return false;
 }
 
+std::string MediaPlaybackWatcher::currentAppId() const {
+    std::scoped_lock lk{const_cast<std::mutex&>(m_mutex)};
+    for (const auto& [id, entry] : m_sessions) {
+        if (entry.playing) {
+            std::string s;
+            for (wchar_t c : std::wstring_view(id.c_str()))
+                s.push_back(static_cast<char>(c));
+            return s;
+        }
+    }
+    return {};
+}
+
 bool MediaPlaybackWatcher::tryPauseActive() {
     if (!m_manager) return false;
     try {
@@ -178,12 +191,71 @@ bool MediaPlaybackWatcher::tryPauseAllSessions() {
     return any_paused;
 }
 
+namespace {
+
+// EnumWindows callback: post APPCOMMAND_MEDIA_PLAY_PAUSE to any visible top-level
+// browser window. Class names checked:
+//   - Chrome_WidgetWin_1 / Chrome_WidgetWin_0 : Google Chrome, Edge (Chromium), Brave, Vivaldi
+//   - MozillaWindowClass                        : Firefox
+// The lParam carries a counter we increment for each window we touch.
+BOOL CALLBACK pauseBrowserWindowsProc(HWND hwnd, LPARAM lParam) {
+    if (!IsWindowVisible(hwnd)) return TRUE;
+
+    wchar_t cls[64] = {};
+    if (GetClassNameW(hwnd, cls, 64) == 0) return TRUE;
+
+    const std::wstring_view cls_v{cls};
+    const bool isBrowser =
+        cls_v == L"Chrome_WidgetWin_1" ||
+        cls_v == L"Chrome_WidgetWin_0" ||
+        cls_v == L"MozillaWindowClass";
+    if (!isBrowser) return TRUE;
+
+    // PostMessage so we don't block on a hung window. APPCOMMAND_MEDIA_PLAY_PAUSE
+    // is what the OS sends when the user hits a hardware play/pause key while
+    // this window has focus — every Chromium-based browser handles it for the
+    // foreground tab, and Firefox honours it too.
+    PostMessageW(hwnd, WM_APPCOMMAND, (WPARAM)hwnd,
+                 (LPARAM)(APPCOMMAND_MEDIA_PLAY_PAUSE << 16));
+
+    auto* count = reinterpret_cast<int*>(lParam);
+    if (count) ++(*count);
+    return TRUE;
+}
+
+}  // anonymous
+
+int MediaPlaybackWatcher::tryPauseAllBrowserWindows() {
+    int count = 0;
+    EnumWindows(pauseBrowserWindowsProc, reinterpret_cast<LPARAM>(&count));
+    if (count > 0) {
+        log::info("Posted APPCOMMAND_MEDIA_PLAY_PAUSE to {} browser window(s)", count);
+    } else {
+        log::debug("tryPauseAllBrowserWindows: no top-level browser windows found");
+    }
+    return count;
+}
+
 bool MediaPlaybackWatcher::tryPauseViaMediaKey() {
-    // NOTE: Web browsers (Chrome, Edge) don't expose their media sessions to Windows APIs,
-    // so we cannot reliably pause YouTube or other web players. This is a known limitation.
-    // Regular media apps (Spotify, VLC, etc.) pause correctly via tryPauseActive/tryPauseAllSessions.
-    log::info("Web player pause not supported (browser limitation)");
-    return false;
+    // Send a hardware VK_MEDIA_PLAY_PAUSE keystroke via SendInput. This reaches any
+    // foreground-capable app that honours media keys — including VLC, which does not
+    // register GSMTC sessions and is therefore invisible to tryPauseActive /
+    // tryPauseAllSessions. Web browsers (Chrome, Edge) also respond to this key for
+    // YouTube and similar players.
+    log::info("Sending VK_MEDIA_PLAY_PAUSE to pause non-GSMTC media (VLC, browsers, ...)");
+    INPUT inp[2] = {};
+    inp[0].type = INPUT_KEYBOARD;
+    inp[0].ki.wVk  = VK_MEDIA_PLAY_PAUSE;
+    inp[0].ki.dwFlags = 0;                   // key down
+    inp[1].type = INPUT_KEYBOARD;
+    inp[1].ki.wVk  = VK_MEDIA_PLAY_PAUSE;
+    inp[1].ki.dwFlags = KEYEVENTF_KEYUP;     // key up
+    UINT sent = SendInput(static_cast<UINT>(std::size(inp)), inp, sizeof(INPUT));
+    if (sent != std::size(inp)) {
+        log::warn("SendInput(VK_MEDIA_PLAY_PAUSE) only sent {}/{} events", sent, std::size(inp));
+        return false;
+    }
+    return true;
 }
 
 void MediaPlaybackWatcher::emitIfChanged() {

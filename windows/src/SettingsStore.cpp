@@ -73,9 +73,12 @@ Settings SettingsStore::load() const {
         std::string key = line.substr(0, eq);
         std::string val = line.substr(eq + 1);
         if (key == "android") {
-            s.androidAddress = parseBluetoothAddress(val);
-            log::debug("  android = {} -> {}",
-                val, s.androidAddress ? formatBluetoothAddress(*s.androidAddress) : "(parse failed)");
+            if (auto addr = parseBluetoothAddress(val)) {
+                s.androidAddresses.push_back(*addr);
+                log::debug("  android = {} -> {}", val, formatBluetoothAddress(*addr));
+            } else {
+                log::warn("  android = {} -> (parse failed)", val);
+            }
         } else if (key == "airpods") {
             s.airpodsAddress = parseBluetoothAddress(val);
             log::debug("  airpods = {} -> {}",
@@ -91,7 +94,8 @@ void SettingsStore::save(const Settings& s) const {
         log::warn("Failed to open settings file for write: {}", m_path.string());
         return;
     }
-    if (s.androidAddress) f << "android=" << formatBluetoothAddress(*s.androidAddress) << '\n';
+    for (auto addr : s.androidAddresses)
+        f << "android=" << formatBluetoothAddress(addr) << '\n';
     if (s.airpodsAddress) f << "airpods=" << formatBluetoothAddress(*s.airpodsAddress) << '\n';
 }
 
