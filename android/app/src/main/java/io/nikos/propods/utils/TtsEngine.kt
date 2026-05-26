@@ -60,6 +60,10 @@ object TtsEngine {
     private val lastUseAt = AtomicLong(0L)
     private val activeUtteranceCount = java.util.concurrent.atomic.AtomicInteger(0)
     private val recentTexts = ArrayDeque<Pair<String, Long>>()  // (text, timestamp)
+    // Timestamp of the last utterance-done event (-1 = none/cleared). Keeps
+    // isSpeaking() true during A2DP buffer drain after onDone fires.
+    private val lastDoneAt = AtomicLong(-1L)
+    private const val A2DP_GRACE_MS = 1_500L
 
     /**
      * Speak [text] through the AirPods. Lazy-inits the engine on first call.
@@ -143,8 +147,14 @@ object TtsEngine {
         scheduleIdleRelease(ctx)
     }
 
-    /** Returns true if an utterance is currently speaking or queued. */
-    fun isSpeaking(): Boolean = activeUtteranceCount.get() > 0
+    /** Returns true if an utterance is currently speaking, queued, or within the
+     *  A2DP drain grace window after completion (Android TTS onDone fires before
+     *  audio reaches AirPods, so we stay "speaking" for a short window). */
+    fun isSpeaking(): Boolean {
+        if (activeUtteranceCount.get() > 0) return true
+        val t = lastDoneAt.get()
+        return t >= 0L && System.currentTimeMillis() - t < A2DP_GRACE_MS
+    }
 
     /**
      * Cancel any in-progress and queued utterances, abandon focus.
@@ -158,6 +168,7 @@ object TtsEngine {
         }
         abandonFocus()
         activeUtteranceCount.set(0)
+        lastDoneAt.set(-1L)  // clear A2DP grace so next press is play/pause
     }
 
     private fun configureEngine(ctx: Context) {
@@ -190,6 +201,7 @@ object TtsEngine {
     private fun onUtteranceDone() {
         if (activeUtteranceCount.decrementAndGet() <= 0) {
             activeUtteranceCount.set(0)
+            lastDoneAt.set(System.currentTimeMillis())
             abandonFocus()
             releaseWakeLock()
         }
