@@ -598,6 +598,13 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
 
         sharedPreferences.registerOnSharedPreferenceChangeListener(this)
 
+        // Sync OS mic state + play confirmation sound when the user mutes/unmutes
+        // from inside the VoIP app (Teams in-app button). Without this, pressing
+        // the in-app button and then the stem would desync the two mute states.
+        CallNotifListener.onMuteStateChanged = { muted ->
+            if (isInAnyCall()) applyMuteStateFromTeams(muted)
+        }
+
         localMac = config.selfMacAddress
         if (localMac.isEmpty()) {
             if (checkSelfPermission("android.permission.LOCAL_MAC_ADDRESS") == PackageManager.PERMISSION_GRANTED) {
@@ -1719,7 +1726,10 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
 
     private fun toggleMicMute() {
         val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
-        val wasMuted = audioManager.isMicrophoneMute
+        // Use the VoIP app's notification state as the canonical source of truth.
+        // If the user muted from inside the app, isMicrophoneMute may still be false
+        // and we'd get the wrong toggle direction without this.
+        val wasMuted = CallNotifListener.isTeamsMuted() ?: audioManager.isMicrophoneMute
         val nowMuted = !wasMuted
 
         // Hardware-level system mic mute. Cuts mic input at the audio HAL so the
@@ -1740,6 +1750,18 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         // Same confirmation tone as head gestures: confirm_no for mute, confirm_yes for unmute.
         initGestureDetector()
         gestureDetector?.audio?.playConfirmation(!nowMuted)
+    }
+
+    /** Called when the VoIP app's in-notification mute state changes (user pressed the
+     *  in-app button). Syncs the OS mic flag so the next stem press reads the right state,
+     *  and plays the same confirmation tone as a stem press would. */
+    private fun applyMuteStateFromTeams(muted: Boolean) {
+        val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+        audioManager.setMicrophoneMute(muted)
+        Log.d(TAG, "applyMuteStateFromTeams: OS mic muted=$muted (synced from app notification)")
+        initGestureDetector()
+        gestureDetector?.audio?.playConfirmation(!muted)
+        if (muted) startMutedReminder() else stopMutedReminder()
     }
 
     private fun processEarDetectionChange(earDetection: ByteArray) {
@@ -2812,7 +2834,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
             while (true) {
                 delay(15_000)
                 val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
-                if (isInAnyCall() && audioManager.isMicrophoneMute) {
+                if (isInAnyCall() && (CallNotifListener.isTeamsMuted() ?: audioManager.isMicrophoneMute)) {
                     gestureDetector?.audio?.playMuteReminder()
                     Log.d(TAG, "Mute reminder beep played")
                 } else {
@@ -2847,8 +2869,9 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
             Log.d(TAG, "Active-call gesture detected: accepted=$accepted, inAnyCall=${isInAnyCall()}")
             if (!isInAnyCall()) return@startDetection
             val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+            val isMuted = CallNotifListener.isTeamsMuted() ?: audioManager.isMicrophoneMute
             if (!accepted) {
-                if (!audioManager.isMicrophoneMute) {
+                if (!isMuted) {
                     audioManager.setMicrophoneMute(true)
                     CallNotifListener.setMuted(true)
                     sendToast("Mic muted")
@@ -2856,7 +2879,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                     startMutedReminder()
                 }
             } else {
-                if (audioManager.isMicrophoneMute) {
+                if (isMuted) {
                     audioManager.setMicrophoneMute(false)
                     CallNotifListener.setMuted(false)
                     sendToast("Mic unmuted")
@@ -4479,6 +4502,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         clearPacketLogs()
         Log.d(TAG, "Service stopped is being destroyed for some reason!")
 
+        CallNotifListener.onMuteStateChanged = null
         sharedPreferences.unregisterOnSharedPreferenceChangeListener(this)
 
         try {

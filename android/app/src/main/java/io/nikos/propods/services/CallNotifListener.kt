@@ -52,6 +52,20 @@ class CallNotifListener : NotificationListenerService() {
         @Volatile private var hangUpAction: Notification.Action? = null
         @Volatile private var lastSeenKey: String? = null
 
+        /** Canonical mute state derived from the app's notification buttons.
+         *  true = app shows "Unmute" (i.e. currently muted)
+         *  false = app shows "Mute" (i.e. currently unmuted)
+         *  null = no active call notification seen yet */
+        @Volatile var teamsMuted: Boolean? = null
+            private set
+
+        /** Called on the main thread whenever the app's in-notification mute state
+         *  flips (not on first detection — only on subsequent changes). */
+        @Volatile var onMuteStateChanged: ((muted: Boolean) -> Unit)? = null
+
+        /** Returns the app's canonical mute state, or null if no call is active. */
+        fun isTeamsMuted(): Boolean? = teamsMuted
+
         fun isAccessGranted(context: Context): Boolean {
             val flat = Settings.Secure.getString(
                 context.contentResolver, "enabled_notification_listeners"
@@ -121,6 +135,7 @@ class CallNotifListener : NotificationListenerService() {
             unmuteAction = null
             hangUpAction = null
             lastSeenKey = null
+            teamsMuted = null
         }
     }
 
@@ -155,6 +170,24 @@ class CallNotifListener : NotificationListenerService() {
                 TAG,
                 "Cached actions from ${sbn.packageName}: mute=${foundMute?.title}, unmute=${foundUnmute?.title}, hangUp=${foundHangUp?.title}"
             )
+
+            // Derive canonical mute state: "Unmute" button visible → currently muted,
+            // "Mute" button visible → currently unmuted. Ambiguous if both or neither present.
+            val newState: Boolean? = when {
+                foundUnmute != null && foundMute == null -> true
+                foundMute != null && foundUnmute == null -> false
+                else -> null
+            }
+            if (newState != null && newState != teamsMuted) {
+                val wasKnown = teamsMuted != null
+                teamsMuted = newState
+                if (wasKnown) {
+                    Log.d(TAG, "Teams mute state changed → $newState (in-app button)")
+                    onMuteStateChanged?.invoke(newState)
+                } else {
+                    Log.d(TAG, "Teams initial mute state detected: $newState")
+                }
+            }
         }
     }
 }

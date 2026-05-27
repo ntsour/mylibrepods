@@ -164,7 +164,7 @@ class GestureFeedback(context: Context) {
 
     fun playMuteReminder() {
         if (!soundsLoaded.get()) return
-        soundPool.play(confirmNoId, 0.2f, 0.2f, 1, 0, 1.0f)
+        soundPool.play(confirmNoId, 0.5f, 0.5f, 1, 0, 1.0f)
     }
 
     fun playConfirmation(isYes: Boolean) {
