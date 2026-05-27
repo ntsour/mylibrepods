@@ -1754,11 +1754,19 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
 
     /** Called when the VoIP app's in-notification mute state changes (user pressed the
      *  in-app button). Syncs the OS mic flag so the next stem press reads the right state,
-     *  and plays the same confirmation tone as a stem press would. */
+     *  and plays the same confirmation tone as a stem press would.
+     *
+     *  If the OS mic already matches [muted] the notification update was caused by our
+     *  own stem press firing CallNotifListener.setMuted() — not by the in-app button —
+     *  so we skip the sound to avoid playing it twice. */
     private fun applyMuteStateFromTeams(muted: Boolean) {
         val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+        if (audioManager.isMicrophoneMute == muted) {
+            Log.d(TAG, "applyMuteStateFromTeams: OS already in sync ($muted), skipping (stem-press echo)")
+            return
+        }
         audioManager.setMicrophoneMute(muted)
-        Log.d(TAG, "applyMuteStateFromTeams: OS mic muted=$muted (synced from app notification)")
+        Log.d(TAG, "applyMuteStateFromTeams: OS mic muted=$muted (synced from in-app button)")
         initGestureDetector()
         gestureDetector?.audio?.playConfirmation(!muted)
         if (muted) startMutedReminder() else stopMutedReminder()
