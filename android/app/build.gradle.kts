@@ -172,13 +172,13 @@ fun registerRootModuleZipTask(
     duplicatesStrategy = DuplicatesStrategy.WARN
 
     from(layout.buildDirectory.file(apkPath)) {
-        into("system/priv-app/LibrePods")
-        rename { "LibrePods.apk" }
+        into("system/priv-app/ProPods")
+        rename { "ProPods.apk" }
     }
 
     delete(layout.buildDirectory.dir("outputs/rootModuleZips"))
 
-    archiveFileName.set("LibrePods-FOSS-v$appVersionName-$buildType.zip")
+    archiveFileName.set("ProPods-FOSS-v$appVersionName-$buildType.zip")
     destinationDirectory.set(layout.buildDirectory.dir("outputs/rootModuleZips"))
 }
 
@@ -198,12 +198,12 @@ val collect = tasks.register<Copy>("collectReleaseArtifacts") {
 
     from(layout.buildDirectory.dir("outputs/apk/release")) {
         include("*.apk")
-        rename(".*", "LibrePods-FOSS-v$appVersionName-release.apk")
+        rename(".*", "ProPods-FOSS-v$appVersionName-release.apk")
     }
 
     from(layout.buildDirectory.dir("outputs/apk/debug")) {
         include("*.apk")
-        rename(".*", "LibrePods-FOSS-v$appVersionName-debug.apk")
+        rename(".*", "ProPods-FOSS-v$appVersionName-debug.apk")
     }
 
     from(layout.buildDirectory.dir("outputs/bundle/playRelease")) {

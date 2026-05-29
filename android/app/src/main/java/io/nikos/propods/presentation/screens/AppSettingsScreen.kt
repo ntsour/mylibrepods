@@ -468,7 +468,7 @@ fun AppSettingsScreen(
                     onClick = {
                         val intent = Intent(
                             Intent.ACTION_VIEW,
-                            "https://github.com/kavishdevar/librepods/issues".toUri()
+                            "https://github.com/ntsour/propods/issues".toUri()
                         )
                         context.startActivity(intent)
                     },

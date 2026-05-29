@@ -1239,7 +1239,7 @@ private fun HelpContent(
         }
         MenuDivider()
         MenuNavRow("GitHub Issues", dark) {
-            context.startActivity(Intent(Intent.ACTION_VIEW, "https://github.com/kavishdevar/librepods/issues".toUri()))
+            context.startActivity(Intent(Intent.ACTION_VIEW, "https://github.com/ntsour/propods/issues".toUri()))
         }
         MenuDivider()
         MenuNavRow("Open Source Licenses", dark) { navController.navigate("open_source_licenses") }

@@ -389,12 +389,33 @@ fun ConnectionSettings(
                 .padding(horizontal = 12.dp)
         )
 
-        StyledToggle(
-            label = stringResource(R.string.automatically_connect),
-            description = stringResource(R.string.automatically_connect_description),
-            independent = false,
-            checked = automaticConnectionEnabled,
-            onCheckedChange = onAutomaticConnectionChanged
-        )
+        if (earDetectionAvailable) {
+            StyledToggle(
+                label = stringResource(R.string.automatically_connect),
+                description = stringResource(R.string.automatically_connect_description),
+                independent = false,
+                checked = automaticConnectionEnabled,
+                onCheckedChange = onAutomaticConnectionChanged
+            )
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Box(modifier = Modifier.weight(1f).alpha(0.4f)) {
+                    StyledToggle(
+                        label = stringResource(R.string.automatically_connect),
+                        description = stringResource(R.string.automatically_connect_description),
+                        independent = false,
+                        checked = automaticConnectionEnabled,
+                        onCheckedChange = { /* no-op: AACP not available */ },
+                        enabled = false
+                    )
+                }
+                io.nikos.propods.presentation.components.RequiresAacpIcon()
+                Spacer(Modifier.width(12.dp))
+            }
+        }
     }
 }

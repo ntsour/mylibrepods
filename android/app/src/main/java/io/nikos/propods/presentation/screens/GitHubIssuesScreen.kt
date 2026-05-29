@@ -51,7 +51,7 @@ fun GitHubIssuesScreen() {
                 Text("Report bugs or request features on GitHub.", style = TextStyle(fontSize = 16.sp, fontFamily = SfPro, color = if (dark) Color.White else Color.Black))
                 Spacer(Modifier.height(16.dp))
                 StyledButton(onClick = {
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/kavishdevar/librepods/issues")))
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/ntsour/propods/issues")))
                 }, backdrop = rememberLayerBackdrop(), modifier = Modifier.fillMaxWidth()) {
                     Text("Open GitHub Issues", style = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Medium, fontFamily = SfPro, color = Color.White))
                 }

@@ -60,7 +60,7 @@
     <string name="more_settings_title">Open AirPods Settings</string>
     <string name="more_settings_subtitle">Manage AirPods features and preferences</string>
     <string name="cross_device_handover">Handover to other devices</string>
-    <string name="cross_device_handover_description">AirPods will automatically switch to whichever device starts playing audio. Requires LibrePods on your other devices.</string>
+    <string name="cross_device_handover_description">AirPods will automatically switch to whichever device starts playing audio. Requires ProPods on your other devices.</string>
     <string name="ear_detection">Automatic Ear Detection</string>
     <string name="auto_play">Auto Play</string>
     <string name="auto_pause">Auto Pause</string>
