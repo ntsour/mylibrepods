@@ -201,6 +201,12 @@ object CrossDeviceClient {
                     else CrossDevicePackets.AIRPODS_DISCONNECTED.packet
                 )
             }
+            // Courtesy-filter handshake (mirror of CrossDevice.processPacket).
+            raw.contentEquals(CrossDevicePackets.REQUEST_TAKEOVER.packet) ->
+                send(CrossDevice.courtesyReplyPacket())
+            raw.contentEquals(CrossDevicePackets.COURTESY_DENY.packet) ->
+                CrossDevice.peerDeniedTakeover = true
+            raw.contentEquals(CrossDevicePackets.COURTESY_GRANT.packet) -> { /* no objection */ }
         }
     }
 

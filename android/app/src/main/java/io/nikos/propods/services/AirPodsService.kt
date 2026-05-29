@@ -1946,13 +1946,15 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
             ),
             qsClickBehavior = sharedPreferences.getString("qs_click_behavior", "cycle") ?: "cycle",
 
-            // AirPods state-based takeover
+            // AirPods state-based takeover (courtesy filter). Default true = permit
+            // takeover regardless of holder state, matching first-run seeding; the
+            // user opts into politeness by turning a specific state OFF.
             takeoverWhenDisconnected = sharedPreferences.getBoolean(
-                "takeover_when_disconnected", false
+                "takeover_when_disconnected", true
             ),
-            takeoverWhenIdle = sharedPreferences.getBoolean("takeover_when_idle", false),
-            takeoverWhenMusic = sharedPreferences.getBoolean("takeover_when_music", false),
-            takeoverWhenCall = sharedPreferences.getBoolean("takeover_when_call", false),
+            takeoverWhenIdle = sharedPreferences.getBoolean("takeover_when_idle", true),
+            takeoverWhenMusic = sharedPreferences.getBoolean("takeover_when_music", true),
+            takeoverWhenCall = sharedPreferences.getBoolean("takeover_when_call", true),
 
             // Phone state-based takeover
             takeoverWhenRingingCall = sharedPreferences.getBoolean(
@@ -2111,7 +2113,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                 preferences.getBoolean(key, true)
 
             "takeover_when_idle" -> config.takeoverWhenIdle = preferences.getBoolean(key, true)
-            "takeover_when_music" -> config.takeoverWhenMusic = preferences.getBoolean(key, false)
+            "takeover_when_music" -> config.takeoverWhenMusic = preferences.getBoolean(key, true)
             "takeover_when_call" -> config.takeoverWhenCall = preferences.getBoolean(key, true)
 
             // Phone state-based takeover
@@ -3597,6 +3599,24 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
             }
         }
 
+        // Courtesy filter ("Connect when your AirPods' status is…"), holder-authoritative.
+        // If a peer currently holds the AirPods, ask all peers for a verdict; the holder
+        // denies if ITS OWN toggle forbids interruption in its current state. We latch any
+        // single DENY (N-device safe). This can only SUPPRESS an intent-driven takeover,
+        // never trigger one. No reply within the window (offline / older build) → pull.
+        if (CrossDevice.isPeerConnected && !isA2dpConnectedTo(macAddress)) {
+            CrossDevice.requestTakeoverVerdict()
+            var waited = 0
+            while (!CrossDevice.peerDeniedTakeover && waited < 250) {
+                Thread.sleep(25); waited += 25
+            }
+            if (CrossDevice.peerDeniedTakeover) {
+                Log.d(TAG, "takeOver: courtesy filter — holder denied (busy in a protected state); not interrupting")
+                return
+            }
+            Log.d(TAG, "takeOver: courtesy filter — no deny within window, proceeding")
+        }
+
         Log.d(TAG, "takeOver START: macAddress=$macAddress, taking over for $takingOverFor")
         val bluetoothManager = getSystemService(BluetoothManager::class.java)
         val bluetoothAdapter = bluetoothManager.adapter
@@ -4660,6 +4680,24 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         val peer = sharedPreferences.getString("cross_device_peer_mac", "") ?: ""
         val shared = CrossDevice.isEnabled && peer.isNotEmpty()
         return !shared || isA2dpConnectedTo(macAddress)
+    }
+
+    /**
+     * Holder-authoritative courtesy verdict. Returns true = DENY an incoming
+     * takeover, i.e. WE currently hold the AirPods and our own "Connect when your
+     * AirPods' status is…" toggle forbids interruption in our current state.
+     * A non-holder never objects. Derived from purely local signals — no AACP —
+     * so it works on limited-mode devices too. Because only the real holder can
+     * deny and the requester latches any single deny, this is N-device safe.
+     */
+    fun courtesyDeniesTakeover(): Boolean {
+        if (!isA2dpConnectedTo(macAddress)) return false // not the holder → no objection
+        val am = getSystemService(AUDIO_SERVICE) as AudioManager
+        return when {
+            isInCall || isVoIPCallActive || isCallRinging -> !config.takeoverWhenCall
+            am.isMusicActive -> !config.takeoverWhenMusic
+            else -> !config.takeoverWhenIdle
+        }
     }
 }
 

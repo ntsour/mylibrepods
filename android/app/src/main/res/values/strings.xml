@@ -70,7 +70,7 @@
     <string name="saved_logs">Saved Logs</string>
     <string name="no_logs_found">No saved logs found</string>
     <string name="takeover_header">Auto-Connect preferences</string>
-    <string name="takeover_airpods_state">Connect to your AirPods when its status is:</string>
+    <string name="takeover_airpods_state">Allow your AirPods to move to another device when:</string>
     <string name="takeover_disconnected">Disconnected</string>
     <string name="takeover_disconnected_desc">AirPods are not connected to a device</string>
     <string name="takeover_idle">Idle</string>

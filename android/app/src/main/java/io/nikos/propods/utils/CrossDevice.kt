@@ -47,6 +47,14 @@ enum class CrossDevicePackets(val packet: ByteArray) {
     // Windows → Android: whether a call/meeting is actively using AirPods on Windows.
     WINDOWS_AUDIO_ACTIVE(byteArrayOf(0x00, 0x03, 0x00, 0x01)),
     WINDOWS_AUDIO_IDLE(byteArrayOf(0x00, 0x03, 0x00, 0x00)),
+    // Courtesy-filter handshake (holder-authoritative). The requester broadcasts
+    // REQUEST_TAKEOVER; each peer replies COURTESY_DENY only if IT currently holds
+    // the AirPods and its own toggle forbids interruption in its current state,
+    // otherwise COURTESY_GRANT. The requester latches "did anyone deny?" — N-device
+    // safe (only the real holder denies; any deny blocks; no deny → pull).
+    REQUEST_TAKEOVER(byteArrayOf(0x00, 0x02, 0x00, 0x05)),
+    COURTESY_GRANT(byteArrayOf(0x00, 0x06, 0x00, 0x00)),
+    COURTESY_DENY(byteArrayOf(0x00, 0x06, 0x00, 0x01)),
 }
 
 object CrossDevice {
@@ -62,6 +70,16 @@ object CrossDevice {
     var isAvailable: Boolean = false  // true = AirPods are on the remote device, not us
     /** True when Windows has reported an active audio session (call/meeting) on the AirPods endpoint. */
     var peerAudioActive: Boolean = false
+    /** Latched by an inbound COURTESY_DENY during a [requestTakeoverVerdict] window:
+     *  some peer holds the AirPods and refused to be interrupted. Reset to false
+     *  before each query, so no reply (old build / offline) falls back to "pull". */
+    @Volatile var peerDeniedTakeover: Boolean = false
+
+    /** The single configured peer MAC (2-device model). The RFCOMM server only
+     *  accepts inbound connections from this device — any other bonded ProPods
+     *  device dialing in is rejected, so stale/stray peers can't pollute the
+     *  shared cross-device state. Updated by [init]. */
+    @Volatile private var configuredPeerMac: String? = null
     var batteryBytes: ByteArray = byteArrayOf()
     var ancBytes: ByteArray = byteArrayOf()
 
@@ -77,6 +95,7 @@ object CrossDevice {
     fun init(context: Context) {
         val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
         val peerMac = prefs.getString("cross_device_peer_mac", null)
+        configuredPeerMac = peerMac
         // Auto-enable when a peer MAC is saved but the flag was never explicitly set
         // (covers devices without AACP that configured a peer before this flag existed).
         isEnabled = prefs.getBoolean("cross_device_enabled", !peerMac.isNullOrEmpty())
@@ -190,7 +209,17 @@ object CrossDevice {
                     Log.d(TAG, "Server socket closed: ${e.message}")
                     break
                 }
-                Log.d(TAG, "Client connected: ${socket.remoteDevice.address} (${clientSockets.size + 1} total)")
+                // Accept only the configured peer (2-device model). Reject any other
+                // bonded ProPods device so a stale/stray peer can't connect and
+                // pollute the single-valued cross-device state.
+                val addr = socket.remoteDevice.address
+                val peer = configuredPeerMac
+                if (peer.isNullOrEmpty() || !addr.equals(peer, ignoreCase = true)) {
+                    Log.w(TAG, "Rejecting inbound CrossDevice connection from $addr — not the configured peer ($peer)")
+                    socket.runCatching { close() }
+                    continue
+                }
+                Log.d(TAG, "Client connected: $addr (${clientSockets.size + 1} total)")
                 clientSockets.add(socket)
                 CoroutineScope(Dispatchers.IO).launch { handleClientConnection(socket) }
             }
@@ -318,6 +347,12 @@ object CrossDevice {
                 peerAudioActive = false
                 Log.d(TAG, "Windows reports audio session idle")
             }
+            raw.contentEquals(CrossDevicePackets.REQUEST_TAKEOVER.packet) -> {
+                // A peer wants to take the AirPods; answer whether we (if we hold them) consent.
+                sendRemotePacket(courtesyReplyPacket())
+            }
+            raw.contentEquals(CrossDevicePackets.COURTESY_DENY.packet) -> { peerDeniedTakeover = true }
+            raw.contentEquals(CrossDevicePackets.COURTESY_GRANT.packet) -> { /* no objection */ }
             raw.size >= 4 && raw.sliceArray(0..3)
                 .contentEquals(CrossDevicePackets.AIRPODS_DATA_HEADER.packet) -> {
                 isAvailable = true
@@ -386,6 +421,23 @@ object CrossDevice {
             Log.w(TAG, "Failed to send to ${socket.remoteDevice.address}: ${e.message}")
             onFail?.invoke()
         }
+    }
+
+    /** Holder-authoritative reply: DENY only if WE hold the pods and our own toggle
+     *  forbids interruption in our current state; GRANT otherwise. */
+    fun courtesyReplyPacket(): ByteArray =
+        if (ServiceManager.getService()?.courtesyDeniesTakeover() == true)
+            CrossDevicePackets.COURTESY_DENY.packet
+        else
+            CrossDevicePackets.COURTESY_GRANT.packet
+
+    /** Broadcast a takeover-verdict request to all peers. Clears the deny latch
+     *  first; replies arrive asynchronously via processPacket. Sent on both RFCOMM
+     *  directions so it works regardless of which side is server/client. */
+    fun requestTakeoverVerdict() {
+        peerDeniedTakeover = false
+        sendRemotePacket(CrossDevicePackets.REQUEST_TAKEOVER.packet)
+        CrossDeviceClient.send(CrossDevicePackets.REQUEST_TAKEOVER.packet)
     }
 
     fun notifyConnected() {

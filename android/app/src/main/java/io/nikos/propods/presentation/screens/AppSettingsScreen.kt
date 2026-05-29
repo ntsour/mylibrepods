@@ -249,20 +249,6 @@ fun AppSettingsScreen(
                         .padding(vertical = 4.dp)
                 ) {
                     StyledToggle(
-                        label = stringResource(R.string.takeover_disconnected),
-                        description = stringResource(R.string.takeover_disconnected_desc),
-                        checked = state.takeoverWhenDisconnected,
-                        onCheckedChange = viewModel::setTakeoverWhenDisconnected,
-                        independent = false,
-                        enabled = state.isPremium
-                    )
-                    HorizontalDivider(
-                        thickness = 1.dp,
-                        color = Color(0x40888888),
-                        modifier = Modifier.padding(horizontal = 12.dp)
-                    )
-
-                    StyledToggle(
                         label = stringResource(R.string.takeover_idle),
                         description = stringResource(R.string.takeover_idle_desc),
                         checked = state.takeoverWhenIdle,

@@ -1177,8 +1177,6 @@ private fun AudioContent(
         MenuDivider()
         MenuSectionHeader(stringResource(R.string.takeover_airpods_state), dark)
         Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
-            StyledToggle(label = stringResource(R.string.takeover_disconnected), description = stringResource(R.string.takeover_disconnected_desc), checked = appState.takeoverWhenDisconnected, onCheckedChange = appSettingsViewModel::setTakeoverWhenDisconnected, independent = true)
-            Spacer(Modifier.height(4.dp))
             StyledToggle(label = stringResource(R.string.takeover_idle), description = stringResource(R.string.takeover_idle_desc), checked = appState.takeoverWhenIdle, onCheckedChange = appSettingsViewModel::setTakeoverWhenIdle, independent = true)
             Spacer(Modifier.height(4.dp))
             StyledToggle(label = stringResource(R.string.takeover_music), description = stringResource(R.string.takeover_music_desc), checked = appState.takeoverWhenMusic, onCheckedChange = appSettingsViewModel::setTakeoverWhenMusic, independent = true)
