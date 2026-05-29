@@ -189,6 +189,7 @@ private fun buildSearchIndex(): List<SearchableItem> = listOf(
     SearchableItem("Gym Mode",                 "Smart Features", "smart", "category/smart", anchor = "gym_mode", keywords = listOf("workout", "fitness", "stem", "timer")),
     SearchableItem("Gym Press Actions",        "AirPods Controls", "controls", "gym_press_actions", keywords = listOf("workout", "fitness", "stem")),
     // AirPods Settings
+    SearchableItem("Customize Transparency Mode", "AirPods Settings", "settings", "transparency_customization", keywords = listOf("transparency", "customize", "anc", "adaptive")),
     SearchableItem("Device Name",              "AirPods Settings", "settings", "rename", keywords = listOf("rename", "bluetooth name")),
     SearchableItem("Hearing Aid",              "AirPods Settings", "settings", "hearing_aid", keywords = listOf("amplification", "audiogram")),
     SearchableItem("Hearing Protection",       "AirPods Settings", "settings", "hearing_protection", keywords = listOf("ppe", "loud sound")),
@@ -214,8 +215,18 @@ private fun buildSearchIndex(): List<SearchableItem> = listOf(
     SearchableItem("Dynamic Island Popup",     "App Settings", "appsettings", "popup_animations", keywords = listOf("animation", "island", "connect")),
     SearchableItem("Act as Apple Device",      "App Settings", "appsettings", "xposed_settings", keywords = listOf("xposed", "vendor id", "apple", "hook")),
     SearchableItem("Permissions",              "App Settings", "appsettings", "permissions", keywords = listOf("access", "grant")),
+    SearchableItem("Background Activity",      "App Settings", "appsettings", "category/appsettings", keywords = listOf("battery", "optimization", "unrestricted", "background")),
+    SearchableItem("Connect When Disconnected","App Settings", "appsettings", "app_settings", keywords = listOf("takeover", "auto connect", "airpods disconnected")),
+    SearchableItem("Connect When Idle",        "App Settings", "appsettings", "app_settings", keywords = listOf("takeover", "auto connect", "idle")),
+    SearchableItem("Connect When Playing Media","App Settings", "appsettings", "app_settings", keywords = listOf("takeover", "auto connect", "music", "media")),
+    SearchableItem("Connect When On Call",     "App Settings", "appsettings", "app_settings", keywords = listOf("takeover", "auto connect", "call")),
+    SearchableItem("Connect When Receiving a Call","App Settings","appsettings","app_settings", keywords = listOf("takeover", "auto connect", "ringing", "incoming call")),
+    SearchableItem("Connect When Starting Media","App Settings","appsettings","app_settings", keywords = listOf("takeover", "auto connect", "media starts", "playback")),
     // Audio & Connection
     SearchableItem("Audio Settings",           "Audio & Connection", "audio", "audio_settings", keywords = listOf("eq", "equalizer", "adaptive volume")),
+    SearchableItem("Personalized Volume",      "Audio & Connection", "audio", "audio_settings", keywords = listOf("adaptive volume", "volume adjust", "environment")),
+    SearchableItem("Handover to Other Devices","Audio & Connection", "audio", "connection_settings", keywords = listOf("cross device", "auto switch", "handover", "other device")),
+    SearchableItem("Peer Android Device",      "Audio & Connection", "audio", "connection_settings", keywords = listOf("peer", "other device", "android", "handover", "cross device")),
     SearchableItem("Ear Detection",            "Audio & Connection", "audio", "connection_settings", keywords = listOf("auto pause", "in ear", "wear detection")),
     SearchableItem("Disconnect When Not Wearing","Audio & Connection","audio", "connection_settings", keywords = listOf("auto disconnect", "wear detection")),
     SearchableItem("Microphone Settings",      "Audio & Connection", "audio", "microphone_settings", keywords = listOf("mic", "microphone mode")),
@@ -436,7 +447,7 @@ fun AirPodsSettingsScreen(
     StyledScaffold(
         title = if (searchActive) "" else deviceName.text,
         titleAlign = androidx.compose.ui.text.style.TextAlign.Start,
-        actionButtons = if (state.isLocallyConnected) listOf({ scaffoldBackdrop ->
+        actionButtons = if (state.isLocallyConnected || (!state.aacpAvailable && state.isA2dpConnected)) listOf({ scaffoldBackdrop ->
             if (searchActive) {
                 Row(
                     Modifier.fillMaxWidth().padding(end = 8.dp),
