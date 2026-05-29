@@ -1204,6 +1204,8 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                         val inFlux = lastA2dpStateChangeMs > 0 && fluxAgeMs < A2DP_STATE_FLUX_WINDOW_MS
                         if (inFlux) {
                             Log.d(TAG, "Battery: case-opened transition but A2DP in flux (${fluxAgeMs}ms) — suppressing connectAudio")
+                        } else if (!mayProactivelyConnect()) {
+                            Log.d(TAG, "Battery: case-opened but shared arrangement and not holding A2DP — not grabbing, wait for user intent")
                         } else {
                             Log.d(TAG, "Battery: pods no longer both charging (case opened) → connectAudio")
                             connectAudio(this@AirPodsService, device)
@@ -1807,11 +1809,15 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
             }
 
             if (newInEarData.contains(true) && inEarData == listOf(false, false)) {
-                connectAudio(this@AirPodsService, device)
-                justEnabledA2dp = true
-                registerA2dpConnectionReceiver()
-                if (MediaController.getMusicActive()) {
-                    MediaController.userPlayedTheMedia = true
+                if (mayProactivelyConnect()) {
+                    connectAudio(this@AirPodsService, device)
+                    justEnabledA2dp = true
+                    registerA2dpConnectionReceiver()
+                    if (MediaController.getMusicActive()) {
+                        MediaController.userPlayedTheMedia = true
+                    }
+                } else {
+                    Log.d(TAG, "Ear-in but shared arrangement and not holding A2DP — not grabbing, wait for user intent")
                 }
             } else if (newInEarData == listOf(false, false)) {
                 // Only pause when the AirPods are actually the active audio route.
@@ -4624,6 +4630,25 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
      * connectivity or handover flow.
      */
     fun isA2dpConnected(): Boolean = isA2dpConnectedTo(macAddress)
+
+    /**
+     * Handover policy gate for PASSIVE, event-driven connect attempts (BLE
+     * availability tick, battery case-open, ear-in). Returns true only when a
+     * proactive grab is permitted:
+     *   - we're not in a shared arrangement (cross-device off OR no peer set), OR
+     *   - we already hold the A2DP link, so connecting is local audio management
+     *     (resume), not stealing the pods from the peer.
+     *
+     * A disconnection event must NEVER lead to a grab — in a shared arrangement
+     * the only ways to acquire the pods are an intentful takeOver() (call /
+     * media-start) or the manual "Reconnect to last device" button, both of
+     * which bypass this gate.
+     */
+    private fun mayProactivelyConnect(): Boolean {
+        val peer = sharedPreferences.getString("cross_device_peer_mac", "") ?: ""
+        val shared = CrossDevice.isEnabled && peer.isNotEmpty()
+        return !shared || isA2dpConnectedTo(macAddress)
+    }
 }
 
 private fun Int.dpToPx(): Int {

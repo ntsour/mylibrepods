@@ -257,13 +257,14 @@ object CrossDevice {
         clientSockets.remove(socket)
         Log.d(TAG, "Client $addr removed (${clientSockets.size} remaining)")
 
-        if (clientSockets.isEmpty()) {
-            isAvailable = false
-            val appCtx = ServiceManager.getService()?.applicationContext
-            appCtx?.sendBroadcast(
-                Intent("io.nikos.propods.AIRPODS_DISCONNECTED_REMOTELY").setPackage(appCtx.packageName)
-            )
-        }
+        // NOTE: deliberately do NOT touch `isAvailable` here. A dropped RFCOMM
+        // coordination socket means we lost VISIBILITY of the peer (Android Doze
+        // routinely kills this idle link — that's why the 20 s keep-alive exists,
+        // and OEM process-killers do the same), NOT that the peer released the
+        // AirPods. Flipping isAvailable=false used to make this device believe the
+        // pods were free and race to grab them, causing an A2DP tug-of-war.
+        // Ownership only changes on an explicit AIRPODS_DISCONNECTED packet from
+        // the peer (handled in processPacket) or our own intentful takeover.
     }
 
     private fun processPacket(raw: ByteArray) {
