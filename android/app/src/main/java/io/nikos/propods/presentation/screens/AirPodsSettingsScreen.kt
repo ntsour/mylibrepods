@@ -508,11 +508,9 @@ fun AirPodsSettingsScreen(
                     }
                 }
             }
-        } else if (state.isLocallyConnected || !state.aacpAvailable) {
-            // Limited-mode devices always get the unified ConnectedScreen — they will
-            // never become "locally connected" in the AACP sense, but the rest of the
-            // app (battery via BLE, handover, find my, etc.) works for them. AACP-only
-            // controls inside ConnectedScreen are greyed out via state.aacpAvailable.
+        } else if (state.isLocallyConnected || (!state.aacpAvailable && state.isA2dpConnected)) {
+            // Limited-mode devices get ConnectedScreen only when A2DP is up.
+            // AACP-only controls inside ConnectedScreen are greyed out via state.aacpAvailable.
             ConnectedScreen(
                 state = state, appState = appState,
                 viewModel = viewModel, appSettingsViewModel = appSettingsViewModel,

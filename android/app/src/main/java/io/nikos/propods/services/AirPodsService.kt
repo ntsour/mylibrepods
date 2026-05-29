@@ -3735,7 +3735,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
      */
     @SuppressLint("MissingPermission")
     private fun isA2dpConnectedTo(mac: String): Boolean {
-        if (mac.isEmpty()) return true
+        if (mac.isEmpty()) return false
         val proxy = bluetoothA2dpProxy ?: return true.also {
             // Cache stays optimistic until the proxy connects.
             a2dpConnectedToOurMac = true
