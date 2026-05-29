@@ -36,6 +36,25 @@ When the high-priority event ends (call hung up, meeting left), the system **may
 Either behavior is acceptable. The key is: **no orphaned media** (the previous
 device's podcast/music should not silently resume without the user's input).
 
+## Principle 4 — A disconnection is never a trigger; the holder may decline
+
+Two refinements that keep handover polite rather than aggressive:
+
+- **Disconnections never grab.** Losing a connection — the AirPods dropping, or the
+  inter-phone coordination link going down (Doze, OEM process-kill, range) — must
+  never, by itself, cause a device to pull the AirPods. Only the manual/high-priority
+  triggers in Principles 1–2 do. A dropped coordination link means "lost visibility
+  of the peer," not "the peer let go."
+
+- **The holder can decline an interruption.** The device currently using the AirPods
+  decides whether it may be interrupted, via the "Allow your AirPods to move to
+  another device when: Idle / Playing media / On call" settings. When a peer's
+  high-priority event (Principle 2) would take the AirPods, the current holder is
+  asked first and can refuse if it's busy in a state the user marked protected
+  (e.g. don't yank them out of an active call). The decision lives on the holder —
+  the device whose experience is being protected — so it's consistent no matter
+  which device initiates.
+
 ## Why: this matters
 
 - AirPods are a single-output device — only one source can hold them at a time.

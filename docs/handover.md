@@ -155,6 +155,14 @@ starts a client, so the RFCOMM channel never comes up and all handovers silently
 degrade to "out of range" behaviour (no coordination packet is sent; only the
 unprivileged `A2DP.connect()` attempt fires).
 
+**Inbound restriction (2-device hardening).** The server accepts an inbound socket
+only when its remote MAC equals the single configured peer (`configuredPeerMac`,
+set in `CrossDevice.init`); any other bonded ProPods device dialing in is rejected
+and closed. Because the cross-device state is currently single-valued
+(`isAvailable`, relayed battery/ANC), a stray third device connecting would clobber
+it — restricting the server keeps the topology deterministic. (Full N-peer support
+is designed in `docs/multi-peer-cross-device-plan.md` but not yet implemented.)
+
 ---
 
 ### Packet Reference
@@ -167,11 +175,76 @@ Defined in `CrossDevice.kt` as `CrossDevicePackets`:
 | `AIRPODS_DISCONNECTED` | `00 01 00 00` | "I lost the AirPods" |
 | `REQUEST_DISCONNECT` | `00 02 00 00` | "Release the AirPods — I am taking over" |
 | `REQUEST_CONNECTION_STATUS` | `00 02 00 03` | Keep-alive ping (every 20 s) |
+| `REQUEST_TAKEOVER` | `00 02 00 05` | Courtesy verdict request: "I want to take over — any objection?" |
+| `COURTESY_GRANT` | `00 06 00 00` | "No objection" (I don't hold the pods, or my toggle allows it) |
+| `COURTESY_DENY` | `00 06 00 01` | "I hold the pods and my toggle forbids interruption in my current state" |
 
 Packets are broadcast to all connected sockets (`CrossDevice.sendRemotePacket`) **and**
 forwarded on the client socket (`CrossDeviceClient.send`) so both roles receive them.
 
 ---
+
+### Takeover Triggers & the No-Steal Policy
+
+A device only takes the AirPods on **local intent** — never as a side effect of a
+disconnection. The triggers that call `takeOver(...)`:
+
+| Trigger | Source | Gated by |
+|---|---|---|
+| Media playback starts here | `MediaController` play / `onPlaybackConfigChanged` | `takeoverWhenMediaStart` |
+| Cellular call ringing / offhook | `TelephonyCallback` | `takeoverWhenRingingCall` + a pod in-ear |
+| **VoIP call answered/started here** | `AudioManager` `MODE_IN_COMMUNICATION` | `takeoverWhenRingingCall` + a pod in-ear |
+| Manual "Reconnect to last device" | UI button (`reconnectFromSavedMac`) | — (explicit user action) |
+
+**VoIP calls** (Teams, Zoom, Meet, WhatsApp…) are not Telecom-integrated, so they
+never reach `CALL_STATE_*`. They surface only via `MODE_IN_COMMUNICATION`, which
+fires on the device that **answered or started** the call — never on a device that
+is merely ringing. This is deliberate: an incoming VoIP call rings on every
+logged-in device at once, so triggering on *ring* would make all of them fight for
+the pods. Answering is the unambiguous "this device needs them" signal.
+
+**Disconnections never grab.** The passive, event-driven connect paths (BLE
+availability tick, battery case-open, ear-in) are gated by `mayProactivelyConnect()`:
+in a shared arrangement (cross-device enabled + a peer configured) they only fire
+when this device **already holds the A2DP link** (i.e. it's local audio management,
+not stealing). A coordination-socket drop is **not** treated as "the peer released
+the pods" — `CrossDevice` no longer flips `isAvailable=false` when its RFCOMM client
+socket drops (Doze/OEM-kill routinely drop that idle link). Ownership only changes
+on an explicit `AIRPODS_DISCONNECTED` packet or our own intentful takeover.
+
+### Courtesy Filter — Holder-Authoritative Takeover Veto
+
+The "Allow your AirPods to move to another device when: Idle / Playing media / On
+call" toggles let the **holder** veto an incoming takeover based on what it's doing.
+
+Flow (requester = the device running `takeOver`):
+
+1. If a peer is connected and this device does **not** already hold A2DP, the
+   requester broadcasts `REQUEST_TAKEOVER` to all peers and clears the
+   `peerDeniedTakeover` latch.
+2. Each peer replies via `courtesyDeniesTakeover()`:
+   - Not the holder (`!isA2dpConnectedTo(mac)`) → `COURTESY_GRANT` (no objection).
+   - Holder → `COURTESY_DENY` iff its **own** toggle forbids interruption in its
+     current state: on call (`isInCall || isVoIPCallActive || isCallRinging`) →
+     `!takeoverWhenCall`; else music active → `!takeoverWhenMusic`; else
+     `!takeoverWhenIdle`. State is derived from local signals — **no AACP needed**.
+3. The requester waits up to **250 ms**, latching any inbound `COURTESY_DENY`.
+   - Any DENY → abort the takeover (the holder is busy in a protected state).
+   - No DENY within the window (grants only / offline / older build) → **pull**.
+
+**Why holder-authoritative:** the decision depends only on the holder's settings, so
+it's consistent regardless of which device initiates and the two devices' toggles
+need not be in sync. An earlier requester-side version made behaviour directional
+(it depended on the grabbing device's toggles) — that was the "inconsistent when
+settings differ" bug.
+
+**Why a deny *latch* (not a single state value):** only the real holder ever denies;
+every non-holder grants. The requester ORs all replies into one boolean, so any
+single DENY blocks regardless of how many peers reply or in what order. This is
+**N-device safe** even though the rest of the protocol is currently 2-device.
+
+The "Disconnected" case has no holder to object, so a grab of free pods always
+proceeds — which is why that toggle was removed from the UI.
 
 ### Handover Scenarios
 
@@ -510,3 +583,15 @@ target audience for this app.
    the app can suppress directly. The event-based `expectingPeerTakeover` flag
    correctly identifies these as non-peer-takeover drops (no false-positive
    cooldown), but the audio still leaves the destination.
+
+7. **Two-device only.** The protocol coordinates exactly one pair: peer identity is
+   a single MAC, the client is a single socket, and `isAvailable` / relayed
+   battery / ANC are single-valued. The server is restricted to the one configured
+   peer to keep this safe. 3+ devices are not supported — see
+   `docs/multi-peer-cross-device-plan.md` for the deferred N-peer design.
+
+8. **Courtesy veto needs peer support.** The holder-authoritative veto relies on the
+   peer answering `REQUEST_TAKEOVER`. A peer on an older build (or the Windows app,
+   which doesn't implement it yet) never replies, so the requester's 250 ms window
+   times out and it pulls anyway. Fail-open by design — a missing reply must not
+   block a deliberate takeover.
