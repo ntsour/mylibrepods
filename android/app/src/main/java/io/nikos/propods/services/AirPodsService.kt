@@ -893,6 +893,18 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                     Log.d(TAG, "VoIP call detected (audio mode IN_COMMUNICATION)")
                     setupStemActions()
                     if (config.headGesturesEnabled && config.headGesturesMuteCall) handleActiveCall()
+                    // Handover trigger for VoIP (Teams, Zoom, …). MODE_IN_COMMUNICATION
+                    // fires on the device that ANSWERED (or started) the call, never on
+                    // a device that is only ringing — so this is the unambiguous "this
+                    // device needs the AirPods" signal, without the ring-on-every-device
+                    // tug-of-war. takeOver("call") no-ops if A2DP is already ours and is
+                    // internally gated by config.takeoverWhenRingingCall.
+                    val leAvailableForAudio =
+                        bleManager.getMostRecentStatus()?.isLeftInEar == true ||
+                        bleManager.getMostRecentStatus()?.isRightInEar == true
+                    if (leAvailableForAudio) CoroutineScope(Dispatchers.IO).launch {
+                        takeOver("call")
+                    }
                 }
             } else {
                 if (isVoIPCallActive) {
