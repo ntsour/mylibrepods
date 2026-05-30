@@ -29,7 +29,9 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Context.MODE_PRIVATE
 import android.content.Intent
+import android.Manifest
 import android.content.ServiceConnection
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
@@ -257,7 +259,21 @@ fun Main() {
     val isConnected = remember { mutableStateOf(false) }
 
     val prefs = context.getSharedPreferences("settings", MODE_PRIVATE)
+    // The critical runtime permission for the foreground service to bind: without
+    // BLUETOOTH_CONNECT, startForegroundService is denied, the service never binds,
+    // airPodsViewModel stays null, and the "settings" route renders nothing (black
+    // screen). The persisted `permissions_completed` flag is NOT sufficient on its
+    // own — Android Auto Backup restores that flag on reinstall (and the OS can
+    // auto-revoke permissions for unused apps), while runtime grants are not restored.
+    // So gate onboarding on the ACTUAL permission state, not just the flag.
+    val criticalPermissionsGranted = remember {
+        context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
+            context.checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
+    }
     val isFirstLaunch = remember { !prefs.getBoolean("permissions_completed", false) }
+    // Route to onboarding if either we've never completed it OR the critical
+    // permissions are missing right now (restored flag / revoked grant).
+    val needsPermissions = isFirstLaunch || !criticalPermissionsGranted
 
     val airPodsService = remember { mutableStateOf<AirPodsService?>(null) }
 
@@ -287,7 +303,7 @@ fun Main() {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    val startDestination = if (isFirstLaunch) "permissions" else "settings"
+    val startDestination = if (needsPermissions) "permissions" else "settings"
     val navController = rememberNavController()
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -324,7 +340,19 @@ fun Main() {
                     }) {
                     composable("settings") {
                         val appSettingsViewModel: AppSettingsViewModel = viewModel()
-                        if (airPodsViewModel != null) AirPodsSettingsScreen(airPodsViewModel, appSettingsViewModel, navController)
+                        if (airPodsViewModel != null) {
+                            AirPodsSettingsScreen(airPodsViewModel, appSettingsViewModel, navController)
+                        } else {
+                            // The service hasn't bound yet (or can't — e.g. permissions
+                            // missing). Render a placeholder instead of nothing so the
+                            // user never sees a pure-black screen while we wait/recover.
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = "Starting…",
+                                    color = if (isSystemInDarkTheme()) Color.White else Color.Black
+                                )
+                            }
+                        }
                     }
                     composable("debug") {
                         DebugScreen(navController = navController)
@@ -384,7 +412,10 @@ fun Main() {
                         PurchaseScreen(purchaseViewModel, navController)
                     }
                     composable("permissions") {
-                        val onGranted: (() -> Unit)? = if (isFirstLaunch) ({
+                        // Navigate onward whenever this screen was the start destination
+                        // because permissions were needed — covers both true first launch
+                        // and the "restored flag but missing grant" re-onboarding case.
+                        val onGranted: (() -> Unit)? = if (needsPermissions) ({
                             prefs.edit().putBoolean("permissions_completed", true).apply()
                             navController.navigate("settings") {
                                 popUpTo("permissions") { inclusive = true }
