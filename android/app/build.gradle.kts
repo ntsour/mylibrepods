@@ -27,7 +27,7 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "io.nikos.propods"
+        applicationId = "io.nikos.propods.multipeer"
         minSdk = 33
         targetSdk = 37
         versionCode = 50

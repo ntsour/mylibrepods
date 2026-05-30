@@ -1175,15 +1175,6 @@ private fun AudioContent(
             }
         }
         MenuDivider()
-        MenuSectionHeader(stringResource(R.string.takeover_airpods_state), dark)
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
-            StyledToggle(label = stringResource(R.string.takeover_idle), description = stringResource(R.string.takeover_idle_desc), checked = appState.takeoverWhenIdle, onCheckedChange = appSettingsViewModel::setTakeoverWhenIdle, independent = true)
-            Spacer(Modifier.height(4.dp))
-            StyledToggle(label = stringResource(R.string.takeover_music), description = stringResource(R.string.takeover_music_desc), checked = appState.takeoverWhenMusic, onCheckedChange = appSettingsViewModel::setTakeoverWhenMusic, independent = true)
-            Spacer(Modifier.height(4.dp))
-            StyledToggle(label = stringResource(R.string.takeover_call), description = stringResource(R.string.takeover_call_desc), checked = appState.takeoverWhenCall, onCheckedChange = appSettingsViewModel::setTakeoverWhenCall, independent = true)
-        }
-        MenuDivider()
         MenuSectionHeader(stringResource(R.string.takeover_phone_state), dark)
         Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
             StyledToggle(label = stringResource(R.string.takeover_ringing_call), description = stringResource(R.string.takeover_ringing_call_desc), checked = appState.takeoverWhenRingingCall, onCheckedChange = appSettingsViewModel::setTakeoverWhenRingingCall, independent = true)

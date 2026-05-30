@@ -412,17 +412,24 @@ class AirPodsViewModel(
         }
     }
 
+    private fun readFirstConfiguredPeer(prefs: android.content.SharedPreferences): String? {
+        val json = prefs.getString("cross_device_peers", null)
+        if (json != null) {
+            val arr = org.json.JSONArray(json)
+            if (arr.length() > 0) return arr.getString(0)
+        }
+        return prefs.getString("cross_device_peer_mac", null)
+    }
+
     private fun loadSharedPreferences() {
         val offListeningModeEnabled = sharedPreferences.getBoolean("off_listening_mode", true)
         val automaticEarDetectionEnabled =
             sharedPreferences.getBoolean("automatic_ear_detection", true)
         val automaticConnectionEnabled =
             sharedPreferences.getBoolean("automatic_connection_ctrl_cmd", true)
-        val crossDevicePeerMac =
-            sharedPreferences.getString("cross_device_peer_mac", null)
-        // CrossDevice.init() handles auto-enabling when peerMac is set and the pref
-        // was never written — by the time the ViewModel loads, that pref is already
-        // persisted, so we can read it directly here.
+        val crossDevicePeerMac = readFirstConfiguredPeer(sharedPreferences)
+        // CrossDevice.init() handles auto-enabling when a peer is set and the flag
+        // was never written — by the time the ViewModel loads, that pref is persisted.
         val crossDeviceEnabled =
             sharedPreferences.getBoolean("cross_device_enabled", crossDevicePeerMac != null)
         val headGesturesEnabled = sharedPreferences.getBoolean("head_gestures_enabled", false)
@@ -642,7 +649,10 @@ class AirPodsViewModel(
 
     @android.annotation.SuppressLint("MissingPermission")
     fun setCrossDevicePeerMac(mac: String) {
-        sharedPreferences.edit { putString("cross_device_peer_mac", mac) }
+        sharedPreferences.edit {
+            putString("cross_device_peers", org.json.JSONArray(listOf(mac)).toString())
+            remove("cross_device_peer_mac")
+        }
         _uiState.update { it.copy(crossDevicePeerMac = mac) }
         if (CrossDevice.isEnabled) {
             // Re-run init so role election decides whether to start the client

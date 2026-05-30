@@ -137,7 +137,7 @@ class PopupWindow(
                 updateBatteryStatus(batteryNotification)
 
                 val vid = mView.findViewById<VideoView>(R.id.video)
-                vid.setVideoPath("android.resource://io.nikos.propods/" + R.raw.connected)
+                vid.setVideoPath("android.resource://${mView.context.packageName}/" + R.raw.connected)
                 vid.resolveAdjustedSize(vid.width, vid.height)
                 vid.start()
                 vid.setOnCompletionListener {

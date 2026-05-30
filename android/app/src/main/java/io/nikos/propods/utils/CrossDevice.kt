@@ -24,6 +24,7 @@ import android.bluetooth.BluetoothServerSocket
 import android.bluetooth.BluetoothSocket
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.util.Log
 import io.nikos.propods.services.ServiceManager
 import kotlinx.coroutines.CoroutineScope
@@ -31,9 +32,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.json.JSONArray
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CopyOnWriteArraySet
 
 enum class CrossDevicePackets(val packet: ByteArray) {
     AIRPODS_CONNECTED(byteArrayOf(0x00, 0x01, 0x00, 0x01)),
@@ -67,19 +70,28 @@ object CrossDevice {
     private const val SERVER_KEEPALIVE_INTERVAL_MS = 20_000L
 
     var isEnabled: Boolean = false
-    var isAvailable: Boolean = false  // true = AirPods are on the remote device, not us
+
+    /** Set of configured peer MACs. Loaded from `cross_device_peers` on [init];
+     *  migrates from the legacy `cross_device_peer_mac` single-string key on first
+     *  load. The RFCOMM server only accepts inbound connections from this set. */
+    var configuredPeers: Set<String> = emptySet()
+        internal set
+
+    /** Which peer MACs currently hold the AirPods. `isAvailable` is a computed
+     *  view of this set. Phase 2 will attribute each entry to the exact source MAC;
+     *  Phase 1 uses the full configured peer set as a proxy. */
+    val holders: MutableSet<String> = CopyOnWriteArraySet()
+
+    /** True when any peer holds the AirPods (i.e. [holders] is non-empty).
+     *  Setting to true adds all [configuredPeers] to [holders]; setting to false clears it.
+     *  All existing call-sites in AirPodsService continue to work unchanged. */
+    var isAvailable: Boolean
+        get() = holders.isNotEmpty()
+        set(value) { if (value) holders.addAll(configuredPeers) else holders.clear() }
+
     /** True when Windows has reported an active audio session (call/meeting) on the AirPods endpoint. */
     var peerAudioActive: Boolean = false
-    /** Latched by an inbound COURTESY_DENY during a [requestTakeoverVerdict] window:
-     *  some peer holds the AirPods and refused to be interrupted. Reset to false
-     *  before each query, so no reply (old build / offline) falls back to "pull". */
-    @Volatile var peerDeniedTakeover: Boolean = false
 
-    /** The single configured peer MAC (2-device model). The RFCOMM server only
-     *  accepts inbound connections from this device — any other bonded ProPods
-     *  device dialing in is rejected, so stale/stray peers can't pollute the
-     *  shared cross-device state. Updated by [init]. */
-    @Volatile private var configuredPeerMac: String? = null
     var batteryBytes: ByteArray = byteArrayOf()
     var ancBytes: ByteArray = byteArrayOf()
 
@@ -94,11 +106,10 @@ object CrossDevice {
     @SuppressLint("MissingPermission")
     fun init(context: Context) {
         val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
-        val peerMac = prefs.getString("cross_device_peer_mac", null)
-        configuredPeerMac = peerMac
-        // Auto-enable when a peer MAC is saved but the flag was never explicitly set
-        // (covers devices without AACP that configured a peer before this flag existed).
-        isEnabled = prefs.getBoolean("cross_device_enabled", !peerMac.isNullOrEmpty())
+        configuredPeers = loadAndMigratePeers(prefs)
+        // Auto-enable when a peer is saved but the flag was never explicitly set
+        // (covers devices that configured a peer before this flag existed).
+        isEnabled = prefs.getBoolean("cross_device_enabled", configuredPeers.isNotEmpty())
         if (isEnabled && !prefs.contains("cross_device_enabled")) {
             prefs.edit().putBoolean("cross_device_enabled", true).apply()
         }
@@ -113,9 +124,11 @@ object CrossDevice {
         }
         startServer(adapter)
 
-        if (!peerMac.isNullOrEmpty()) {
-            maybeStartClient(adapter, peerMac)
-        }
+        // Per-pair role election: client to peers whose name sorts higher than ours,
+        // server-only for the rest. Reconcile the client links against that set in
+        // one call so existing links aren't torn down (and re-added) needlessly.
+        val clientPeers = configuredPeers.filter { shouldBeClientTo(adapter, it) }.toSet()
+        CrossDeviceClient.start(adapter, clientPeers)
     }
 
     /**
@@ -139,25 +152,27 @@ object CrossDevice {
      * Fallback when names are unusable (null/blank, or equal — identical models):
      * SERVER-only. Two server-only devices means no handover coordination, but no
      * `read ret: -1` collision storm either — strictly safer than starting a client.
+     *
+     * Pure predicate (no side effects): the caller reconciles the elected client set
+     * against the live links via [CrossDeviceClient.start].
      */
     @SuppressLint("MissingPermission")
-    private fun maybeStartClient(adapter: android.bluetooth.BluetoothAdapter, peerMac: String) {
+    private fun shouldBeClientTo(adapter: android.bluetooth.BluetoothAdapter, peerMac: String): Boolean {
         val ownName = adapter.name
         val peerName = runCatching { adapter.getRemoteDevice(peerMac).name }.getOrNull()
+        val client = electClient(ownName, peerName)
+        Log.d(TAG, "Role election [$peerMac]: ${if (client) "CLIENT" else "SERVER-only"} (own='$ownName' peer='$peerName')")
+        return client
+    }
+
+    /** Pure role-election predicate (extracted for testing). Returns true iff this
+     *  device should be the CLIENT for the pair. SERVER-only when names are unusable
+     *  (null/blank or equal): no client started, so no duplicate-channel collision. */
+    internal fun electClient(ownName: String?, peerName: String?): Boolean {
         if (ownName.isNullOrBlank() || peerName.isNullOrBlank() || ownName.equals(peerName, ignoreCase = true)) {
-            Log.w(TAG, "Role election: names unusable (own='$ownName' peer='$peerName') — staying SERVER-only")
-            CrossDeviceClient.stop()
-            return
+            return false
         }
-        val shouldBeClient = ownName.compareTo(peerName, ignoreCase = true) < 0
-        if (shouldBeClient) {
-            Log.d(TAG, "Role election: I am CLIENT to peer $peerMac (own='$ownName' < peer='$peerName')")
-            CrossDeviceClient.start(adapter, peerMac)
-        } else {
-            Log.d(TAG, "Role election: I am SERVER-only for peer $peerMac (own='$ownName' >= peer='$peerName')")
-            // Make sure no stale client coroutine is running from a previous config.
-            CrossDeviceClient.stop()
-        }
+        return ownName.compareTo(peerName, ignoreCase = true) < 0
     }
 
     /**
@@ -209,13 +224,11 @@ object CrossDevice {
                     Log.d(TAG, "Server socket closed: ${e.message}")
                     break
                 }
-                // Accept only the configured peer (2-device model). Reject any other
-                // bonded ProPods device so a stale/stray peer can't connect and
-                // pollute the single-valued cross-device state.
+                // Accept only configured peers. Reject any other bonded ProPods device
+                // so stale/stray peers can't connect and pollute cross-device state.
                 val addr = socket.remoteDevice.address
-                val peer = configuredPeerMac
-                if (peer.isNullOrEmpty() || !addr.equals(peer, ignoreCase = true)) {
-                    Log.w(TAG, "Rejecting inbound CrossDevice connection from $addr — not the configured peer ($peer)")
+                if (configuredPeers.none { it.equals(addr, ignoreCase = true) }) {
+                    Log.w(TAG, "Rejecting inbound CrossDevice connection from $addr — not in configured peers ($configuredPeers)")
                     socket.runCatching { close() }
                     continue
                 }
@@ -244,7 +257,7 @@ object CrossDevice {
         // Tell only this new client our current AirPods state
         sendToSocket(
             socket,
-            if (ServiceManager.getService()?.isConnected() == true)
+            if (ServiceManager.getService()?.holdsAirPods() == true)
                 CrossDevicePackets.AIRPODS_CONNECTED.packet
             else
                 CrossDevicePackets.AIRPODS_DISCONNECTED.packet
@@ -278,7 +291,7 @@ object CrossDevice {
                 break
             }
             if (bytes == -1) break
-            processPacket(buffer.copyOf(bytes))
+            processPacket(buffer.copyOf(bytes), addr)
         }
 
         keepAliveJob.cancel()
@@ -296,18 +309,29 @@ object CrossDevice {
         // the peer (handled in processPacket) or our own intentful takeover.
     }
 
-    private fun processPacket(raw: ByteArray) {
-        Log.d(TAG, "Received: ${raw.joinToString("") { "%02x".format(it) }}")
+    /**
+     * Handle one inbound packet from [sourceMac]. Shared by both transport sides —
+     * the server read loop ([handleClientConnection]) and the per-peer client links
+     * ([CrossDeviceClient]) both route here, so the protocol lives in one place.
+     *
+     * Ownership is attributed to [sourceMac]: a peer announcing/relaying ownership is
+     * added to [holders]; a peer announcing release is removed. Replies (status,
+     * relayed bytes, courtesy verdict) are sent **back to [sourceMac]** via [sendTo],
+     * not broadcast — so a courtesy verdict for one requester can't be mis-latched by
+     * an unrelated peer (the 3-device correctness fix).
+     */
+    internal fun processPacket(raw: ByteArray, sourceMac: String) {
+        Log.d(TAG, "[$sourceMac] received: ${raw.joinToString("") { "%02x".format(it) }}")
         when {
             raw.contentEquals(CrossDevicePackets.REQUEST_HANDOVER.packet) -> {
                 // Peer wants the AirPods — release them if we hold the connection.
-                // Eagerly flip isAvailable=true: the peer just claimed ownership, so for
-                // *our* takeOver gate ("crossDeviceAvailable=false → bail") to work on a
-                // quick reversal play press, the peer must register as "having them"
-                // immediately — without waiting for the peer's AACP handshake to finish
-                // and its eventual AIRPODS_CONNECTED reply, which can be 5–60 s later.
-                Log.d(TAG, "Received REQUEST_HANDOVER from peer, releasing AirPods (eagerly setting isAvailable=true)")
-                isAvailable = true
+                // Eagerly mark the peer as holder: for *our* takeOver gate
+                // ("crossDeviceAvailable=false → bail") to work on a quick reversal
+                // play press, the peer must register as "having them" immediately —
+                // without waiting for its AACP handshake and eventual AIRPODS_CONNECTED
+                // reply, which can be 5–60 s later.
+                Log.d(TAG, "[$sourceMac] REQUEST_HANDOVER — releasing AirPods (eagerly marking peer as holder)")
+                holders.add(sourceMac)
                 ServiceManager.getService()?.markPeerTakeoverAttempt()
                 ServiceManager.getService()?.disconnectForCD()
             }
@@ -317,23 +341,24 @@ object CrossDevice {
                 ServiceManager.getService()?.disconnectForCD()
             }
             raw.contentEquals(CrossDevicePackets.AIRPODS_CONNECTED.packet) -> {
-                isAvailable = true
+                holders.add(sourceMac)
                 // Peer explicitly announced ownership — if we were expecting a takeover,
                 // arm the peer-drop cooldown proactively (don't wait for ACL_DISCONNECTED).
                 ServiceManager.getService()?.confirmPeerOwnership()
             }
             raw.contentEquals(CrossDevicePackets.AIRPODS_DISCONNECTED.packet) -> {
-                isAvailable = false
+                holders.remove(sourceMac)
             }
             raw.contentEquals(CrossDevicePackets.REQUEST_BATTERY_BYTES.packet) -> {
-                sendRemotePacket(batteryBytes)
+                sendTo(sourceMac, batteryBytes)
             }
             raw.contentEquals(CrossDevicePackets.REQUEST_ANC_BYTES.packet) -> {
-                sendRemotePacket(ancBytes)
+                sendTo(sourceMac, ancBytes)
             }
             raw.contentEquals(CrossDevicePackets.REQUEST_CONNECTION_STATUS.packet) -> {
-                sendRemotePacket(
-                    if (ServiceManager.getService()?.isConnected() == true)
+                sendTo(
+                    sourceMac,
+                    if (ServiceManager.getService()?.holdsAirPods() == true)
                         CrossDevicePackets.AIRPODS_CONNECTED.packet
                     else
                         CrossDevicePackets.AIRPODS_DISCONNECTED.packet
@@ -341,21 +366,28 @@ object CrossDevice {
             }
             raw.contentEquals(CrossDevicePackets.WINDOWS_AUDIO_ACTIVE.packet) -> {
                 peerAudioActive = true
-                Log.d(TAG, "Windows reports active audio session (call/meeting in progress)")
+                Log.d(TAG, "[$sourceMac] Windows reports active audio session (call/meeting in progress)")
             }
             raw.contentEquals(CrossDevicePackets.WINDOWS_AUDIO_IDLE.packet) -> {
                 peerAudioActive = false
-                Log.d(TAG, "Windows reports audio session idle")
+                Log.d(TAG, "[$sourceMac] Windows reports audio session idle")
             }
             raw.contentEquals(CrossDevicePackets.REQUEST_TAKEOVER.packet) -> {
-                // A peer wants to take the AirPods; answer whether we (if we hold them) consent.
-                sendRemotePacket(courtesyReplyPacket())
+                // Older builds send REQUEST_TAKEOVER before taking over; always grant so
+                // they can proceed. We no longer use this round-trip ourselves — requester
+                // always wins (see design rationale in handover.md).
+                sendTo(sourceMac, CrossDevicePackets.COURTESY_GRANT.packet)
             }
-            raw.contentEquals(CrossDevicePackets.COURTESY_DENY.packet) -> { peerDeniedTakeover = true }
-            raw.contentEquals(CrossDevicePackets.COURTESY_GRANT.packet) -> { /* no objection */ }
+            raw.contentEquals(CrossDevicePackets.COURTESY_DENY.packet) -> {
+                // No-op: veto mechanism removed. Log for diagnostics only.
+                Log.d(TAG, "[$sourceMac] COURTESY_DENY received (veto removed — ignored)")
+            }
+            raw.contentEquals(CrossDevicePackets.COURTESY_GRANT.packet) -> {
+                // No-op: veto mechanism removed.
+            }
             raw.size >= 4 && raw.sliceArray(0..3)
                 .contentEquals(CrossDevicePackets.AIRPODS_DATA_HEADER.packet) -> {
-                isAvailable = true
+                holders.add(sourceMac)
                 val deduplicated = deduplicateIfNeeded(raw)
                 val payload = deduplicated.drop(CrossDevicePackets.AIRPODS_DATA_HEADER.packet.size).toByteArray()
                 processRelayedPacket(payload)
@@ -423,30 +455,36 @@ object CrossDevice {
         }
     }
 
-    /** Holder-authoritative reply: DENY only if WE hold the pods and our own toggle
-     *  forbids interruption in our current state; GRANT otherwise. */
-    fun courtesyReplyPacket(): ByteArray =
-        if (ServiceManager.getService()?.courtesyDeniesTakeover() == true)
-            CrossDevicePackets.COURTESY_DENY.packet
-        else
-            CrossDevicePackets.COURTESY_GRANT.packet
+    /** Send a packet to one specific peer, regardless of which transport side reaches
+     *  it: prefer an inbound server socket from that MAC, else our outbound client link. */
+    fun sendTo(mac: String, data: ByteArray) {
+        if (data.isEmpty()) return
+        val socket = clientSockets.find { it.remoteDevice.address.equals(mac, ignoreCase = true) }
+        if (socket != null) {
+            sendToSocket(socket, data) { clientSockets.remove(socket) }
+            return
+        }
+        CrossDeviceClient.send(mac, data)
+    }
 
-    /** Broadcast a takeover-verdict request to all peers. Clears the deny latch
-     *  first; replies arrive asynchronously via processPacket. Sent on both RFCOMM
-     *  directions so it works regardless of which side is server/client. */
-    fun requestTakeoverVerdict() {
-        peerDeniedTakeover = false
-        sendRemotePacket(CrossDevicePackets.REQUEST_TAKEOVER.packet)
-        CrossDeviceClient.send(CrossDevicePackets.REQUEST_TAKEOVER.packet)
+    /** Always grant: requester wins. Kept for backwards compat — old builds that
+     *  send REQUEST_TAKEOVER receive GRANT so they can proceed. */
+    @Suppress("unused")
+    fun courtesyReplyPacket(): ByteArray = CrossDevicePackets.COURTESY_GRANT.packet
+
+    /** Broadcast a packet to every peer: all inbound server clients **and** all
+     *  outbound client links. The two transport sides are disjoint sets of peers
+     *  (role election gives each pair exactly one direction), so this reaches all. */
+    private fun broadcast(data: ByteArray) {
+        sendRemotePacket(data)
+        CrossDeviceClient.sendAll(data)
     }
 
     fun notifyConnected() {
-        sendRemotePacket(CrossDevicePackets.AIRPODS_CONNECTED.packet)
-        CrossDeviceClient.send(CrossDevicePackets.AIRPODS_CONNECTED.packet)
+        broadcast(CrossDevicePackets.AIRPODS_CONNECTED.packet)
     }
     fun notifyDisconnected() {
-        sendRemotePacket(CrossDevicePackets.AIRPODS_DISCONNECTED.packet)
-        CrossDeviceClient.send(CrossDevicePackets.AIRPODS_DISCONNECTED.packet)
+        broadcast(CrossDevicePackets.AIRPODS_DISCONNECTED.packet)
     }
 
     fun close() {
@@ -455,9 +493,45 @@ object CrossDevice {
         clientSockets.forEach { it.runCatching { close() } }
         clientSockets.clear()
         serverSocket = null
-        isAvailable = false
+        holders.clear()
+        configuredPeers = emptySet()
         isEnabled = false
         isServerRunning = false
+    }
+
+    private fun loadAndMigratePeers(prefs: SharedPreferences): Set<String> {
+        val peersJson = prefs.getString("cross_device_peers", null)
+        if (peersJson != null) return parsePeerSet(peersJson)
+
+        val legacyMac = prefs.getString("cross_device_peer_mac", null)
+            ?: return emptySet()
+
+        val set = setOf(legacyMac)
+        prefs.edit()
+            .putString("cross_device_peers", peerSetToJson(set))
+            .remove("cross_device_peer_mac")
+            .apply()
+        Log.d(TAG, "Migrated cross_device_peer_mac → cross_device_peers: $legacyMac")
+        return set
+    }
+
+    private fun parsePeerSet(json: String): Set<String> = buildSet {
+        val arr = JSONArray(json)
+        repeat(arr.length()) { add(arr.getString(it)) }
+    }
+
+    private fun peerSetToJson(peers: Set<String>): String =
+        JSONArray(peers.toList()).toString()
+
+    @Suppress("unused")
+    internal fun resetForTesting() {
+        holders.clear()
+        configuredPeers = emptySet()
+        isEnabled = false
+        isServerRunning = false
+        peerAudioActive = false
+        batteryBytes = byteArrayOf()
+        ancBytes = byteArrayOf()
     }
 
     @SuppressLint("MissingPermission")
