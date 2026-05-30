@@ -6,8 +6,10 @@
    See https://developer.android.com/about/versions/12/backup-restore
 -->
 <full-backup-content>
-    <!--
-   <include domain="sharedpref" path="."/>
-   <exclude domain="sharedpref" path="device.xml"/>
--->
+    <!-- Per-install permission-interaction state must NOT survive backup/restore.
+         A restored "already asked" flag makes the runtime-permission dialog get
+         skipped (App Info opens instead), and a restored "permissions_completed"
+         flag skips onboarding (black screen) — both because runtime grants are
+         not restored alongside these flags. Keep this state install-local. -->
+    <exclude domain="sharedpref" path="permissions_asked.xml"/>
 </full-backup-content>

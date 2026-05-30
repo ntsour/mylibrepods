@@ -4,16 +4,14 @@
    for details.
 -->
 <data-extraction-rules>
+    <!-- Per-install permission-interaction state must NOT survive backup/restore or
+         device transfer: a restored "already asked" flag makes the runtime-permission
+         dialog get skipped (App Info opens instead) even though this install never
+         asked, and runtime grants are never restored alongside it. Keep install-local. -->
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
+        <exclude domain="sharedpref" path="permissions_asked.xml"/>
     </cloud-backup>
-    <!--
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <exclude domain="sharedpref" path="permissions_asked.xml"/>
     </device-transfer>
-    -->
 </data-extraction-rules>

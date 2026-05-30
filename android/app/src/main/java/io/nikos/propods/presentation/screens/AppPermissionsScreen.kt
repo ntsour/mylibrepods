@@ -152,6 +152,16 @@ fun AppPermissionsScreen(onPermissionsGranted: (() -> Unit)? = null) {
     val multiLauncher  = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { refreshAll() }
     val singleLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refreshAll() }
 
+    // Whether we've actually launched a system request for a permission IN THIS SESSION.
+    // The "permanently denied → App Info" decision must be based on this, NOT on a
+    // persisted flag: a persisted "asked" flag can be restored by Android Auto Backup
+    // on reinstall (or survive an OS auto-revoke) while the permission is in the
+    // never-asked state, which would wrongly send the user to App Info instead of
+    // showing the real system dialog. Session-scoped tracking means the first tap
+    // always attempts the dialog; only after we've genuinely asked and still can't
+    // show a rationale do we treat it as permanently denied.
+    val askedThisSession = remember { mutableSetOf<String>() }
+
     // Smart grant: try system dialog first; fall back to App Info only if permanently denied
     fun grantRuntime(permissions: Array<String>) {
         if (permissions.all { isGranted(it) }) return
@@ -160,11 +170,12 @@ fun AppPermissionsScreen(onPermissionsGranted: (() -> Unit)? = null) {
         val permanentlyDenied = activity != null && permissions.any { perm ->
             !isGranted(perm)
                 && !ActivityCompat.shouldShowRequestPermissionRationale(activity, perm)
-                && asked.getBoolean(perm, false)
+                && askedThisSession.contains(perm)
         }
         if (permanentlyDenied) {
             openAppSettings()
         } else {
+            askedThisSession.addAll(permissions)
             asked.edit().apply { permissions.forEach { putBoolean(it, true) }; apply() }
             if (permissions.size == 1) singleLauncher.launch(permissions[0])
             else multiLauncher.launch(permissions)
