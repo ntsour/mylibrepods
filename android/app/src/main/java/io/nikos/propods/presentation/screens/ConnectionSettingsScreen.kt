@@ -13,6 +13,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.testTag
+import androidx.navigation.NavController
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import io.nikos.propods.presentation.components.ConnectionSettings
@@ -21,9 +22,9 @@ import io.nikos.propods.presentation.viewmodel.AirPodsViewModel
 
 @OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
-fun ConnectionSettingsScreen(viewModel: AirPodsViewModel) {
+fun ConnectionSettingsScreen(viewModel: AirPodsViewModel, navController: NavController? = null) {
     val state by viewModel.uiState.collectAsState()
-    
+
     StyledScaffold(title = "Connection Settings") { topPadding, hazeState, bottomPadding ->
         Column(
             modifier = Modifier
@@ -34,20 +35,18 @@ fun ConnectionSettingsScreen(viewModel: AirPodsViewModel) {
                 .padding(horizontal = 16.dp)
         ) {
             Spacer(Modifier.height(topPadding))
-            
+
             ConnectionSettings(
                 crossDeviceEnabled = state.crossDeviceEnabled,
                 onCrossDeviceChanged = viewModel::setCrossDeviceEnabled,
-                crossDevicePeerMac = state.crossDevicePeerMac,
-                onPeerMacChanged = viewModel::setCrossDevicePeerMac,
-                crossDevicePeerConnected = state.crossDevicePeerConnected,
-                onReconnectCrossDevice = viewModel::reconnectCrossDevice,
+                crossDevicePeers = state.crossDevicePeers,
+                navController = navController,
                 automaticEarDetectionEnabled = state.automaticEarDetectionEnabled,
                 onAutomaticEarDetectionChanged = viewModel::setAutomaticEarDetectionEnabled,
                 automaticConnectionEnabled = state.automaticConnectionEnabled,
                 onAutomaticConnectionChanged = viewModel::setAutomaticConnectionEnabled
             )
-            
+
             Spacer(Modifier.height(bottomPadding))
         }
     }

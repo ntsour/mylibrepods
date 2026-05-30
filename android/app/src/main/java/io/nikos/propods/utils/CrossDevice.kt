@@ -99,6 +99,12 @@ object CrossDevice {
     val isServerClientConnected: Boolean get() = clientSockets.isNotEmpty()
     val isPeerConnected: Boolean get() = isServerClientConnected || CrossDeviceClient.isConnected
 
+    /** True when the specific peer [mac] is reachable — either via an inbound server socket
+     *  or via our outbound client link. Used by the UI to show per-peer connection status. */
+    fun isConnectedTo(mac: String): Boolean =
+        clientSockets.any { it.remoteDevice.address.equals(mac, ignoreCase = true) } ||
+        CrossDeviceClient.isConnected(mac)
+
     @Volatile private var serverSocket: BluetoothServerSocket? = null
     private val clientSockets = CopyOnWriteArrayList<BluetoothSocket>()
     @Volatile private var isServerRunning: Boolean = false

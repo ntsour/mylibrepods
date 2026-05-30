@@ -890,10 +890,8 @@ private fun DisconnectedScreen(
                     ConnectionSettings(
                         crossDeviceEnabled = state.crossDeviceEnabled,
                         onCrossDeviceChanged = { viewModel.setCrossDeviceEnabled(it) },
-                        crossDevicePeerMac = state.crossDevicePeerMac,
-                        onPeerMacChanged = { mac -> viewModel.setCrossDevicePeerMac(mac); viewModel.setCrossDeviceEnabled(true) },
-                        crossDevicePeerConnected = state.crossDevicePeerConnected,
-                        onReconnectCrossDevice = viewModel::reconnectCrossDevice,
+                        crossDevicePeers = state.crossDevicePeers,
+                        navController = navController,
                         automaticEarDetectionEnabled = state.automaticEarDetectionEnabled,
                         onAutomaticEarDetectionChanged = { viewModel.setAutomaticEarDetectionEnabled(it) },
                         automaticConnectionEnabled = state.automaticConnectionEnabled,

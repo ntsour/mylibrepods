@@ -285,10 +285,17 @@ is not random" — the Apple auto-switch explanation for the first one was wrong
 courtesy veto race, courtesy veto structurally broken in 3-device).
 
 **Phase 3 — DONE.** App-restart pages bonded AirPods fix: `bondedDevices.forEach` in
-`AirPodsService.onCreate` now skips `fetchUuidsWithSdp()` for the saved AirPods MAC when
-`!mayProactivelyConnect()` (shared mode + not holding A2DP). Non-AirPods bonded devices
-and first-run (empty `macAddress`) are unaffected. Courtesy veto mechanism also removed
-in this phase (requester-always-wins design change; see above).
+`AirPodsService.onCreate` now skips `fetchUuidsWithSdp()` entirely when `inSharedMode`
+(`CrossDevice.isEnabled && configuredPeers.isNotEmpty()`). BLE background scan + explicit
+user intent (play / call) are sufficient for handover in shared mode. Non-shared mode
+is unaffected (normal UUID discovery runs).
+
+**Known edge case (Phase 3 startup fix):** if a device has peers configured but
+`macAddress` is still empty (peers were added before AirPods were ever paired to this
+device), the UUID scan AND the BLE path both gate on a non-empty MAC → auto-discovery
+is dead until the user taps Reconnect once (which seeds the MAC). Unlikely in practice
+(AirPods are normally paired first) but worth noting. Aligns with handover principle
+"follow user attention on manual action."
 
 **Design change post-Phase 2:** courtesy veto mechanism removed. Requester always wins —
 all takeover triggers are explicit user intent (media start / call answered). Holder-state
