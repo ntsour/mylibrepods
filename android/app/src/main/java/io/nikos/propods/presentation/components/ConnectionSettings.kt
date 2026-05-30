@@ -63,7 +63,9 @@ import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.navigation.NavController
 import io.nikos.propods.R
+import io.nikos.propods.presentation.viewmodel.PeerUiInfo
 import kotlin.io.encoding.ExperimentalEncodingApi
 
 @SuppressLint("MissingPermission")
@@ -200,10 +202,8 @@ fun PeerConnectionPanel(
 fun ConnectionSettings(
     crossDeviceEnabled: Boolean,
     onCrossDeviceChanged: (Boolean) -> Unit,
-    crossDevicePeerMac: String?,
-    onPeerMacChanged: (String) -> Unit,
-    crossDevicePeerConnected: Boolean = false,
-    onReconnectCrossDevice: () -> Unit = {},
+    crossDevicePeers: List<PeerUiInfo> = emptyList(),
+    navController: NavController? = null,
     automaticEarDetectionEnabled: Boolean,
     onAutomaticEarDetectionChanged: (Boolean) -> Unit,
     automaticConnectionEnabled: Boolean,
@@ -212,42 +212,6 @@ fun ConnectionSettings(
 ) {
     val isDarkTheme = isSystemInDarkTheme()
     val backgroundColor = if (isDarkTheme) Color(0xFF1C1C1E) else Color(0xFFFFFFFF)
-    val context = LocalContext.current
-    var showPeerPicker by remember { mutableStateOf(false) }
-
-    val bondedDevices: List<BluetoothDevice> = remember {
-        val bt = context.getSystemService(BluetoothManager::class.java)
-        bt?.adapter?.bondedDevices?.toList() ?: emptyList()
-    }
-    val peerName: String? = remember(crossDevicePeerMac, bondedDevices) {
-        bondedDevices.find { it.address == crossDevicePeerMac }?.name
-    }
-
-    if (showPeerPicker) {
-        AlertDialog(
-            onDismissRequest = { showPeerPicker = false },
-            title = { Text("Select peer Android device") },
-            text = {
-                LazyColumn {
-                    items(bondedDevices) { device ->
-                        TextButton(
-                            onClick = {
-                                onPeerMacChanged(device.address)
-                                showPeerPicker = false
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(device.name ?: device.address)
-                        }
-                    }
-                }
-            },
-            confirmButton = {},
-            dismissButton = {
-                TextButton(onClick = { showPeerPicker = false }) { Text("Cancel") }
-            }
-        )
-    }
 
     Column(
         modifier = Modifier
@@ -273,16 +237,22 @@ fun ConnectionSettings(
                     color = Color(0x40888888),
                     modifier = Modifier.padding(horizontal = 12.dp)
                 )
+                // Navigate to the multi-peer management screen
+                val peersLabel = when (crossDevicePeers.size) {
+                    0 -> "Not configured"
+                    1 -> crossDevicePeers[0].name
+                    else -> "${crossDevicePeers.size} devices"
+                }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(58.dp)
-                        .clickable { showPeerPicker = true }
+                        .clickable { navController?.navigate("paired_devices") }
                         .padding(horizontal = 16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Peer Android device",
+                        text = "Connected devices",
                         style = TextStyle(
                             fontSize = 16.sp,
                             fontFamily = FontFamily(Font(R.font.sf_pro)),
@@ -290,19 +260,8 @@ fun ConnectionSettings(
                         )
                     )
                     Spacer(modifier = Modifier.weight(1f))
-                    if (crossDevicePeerMac != null) {
-                        Box(
-                            modifier = Modifier
-                                .padding(end = 6.dp)
-                                .size(8.dp)
-                                .background(
-                                    color = if (crossDevicePeerConnected) Color(0xFF34C759) else Color(0xFF8E8E93),
-                                    shape = CircleShape
-                                )
-                        )
-                    }
                     Text(
-                        text = peerName ?: (crossDevicePeerMac ?: "Not set"),
+                        text = peersLabel,
                         style = TextStyle(
                             fontSize = 14.sp,
                             fontFamily = FontFamily(Font(R.font.sf_pro)),
@@ -319,33 +278,6 @@ fun ConnectionSettings(
                         ),
                         modifier = Modifier.padding(start = 6.dp)
                     )
-                }
-                if (crossDevicePeerMac != null && !crossDevicePeerConnected) {
-                    HorizontalDivider(
-                        thickness = 1.dp,
-                        color = Color(0x40888888),
-                        modifier = Modifier.padding(horizontal = 12.dp)
-                    )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(46.dp)
-                            .clickable {
-                                android.util.Log.d("ConnectionSettings", "Reconnect to peer clicked (UI layer)")
-                                onReconnectCrossDevice()
-                            }
-                            .padding(horizontal = 16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Reconnect to peer",
-                            style = TextStyle(
-                                fontSize = 15.sp,
-                                fontFamily = FontFamily(Font(R.font.sf_pro)),
-                                color = Color(0xFF007AFF)
-                            )
-                        )
-                    }
                 }
             }
         }

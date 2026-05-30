@@ -230,65 +230,6 @@ fun AppSettingsScreen(
                 }
 
                 Text(
-                    text = stringResource(R.string.takeover_airpods_state), style = TextStyle(
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = textColor.copy(alpha = 0.6f),
-                        fontFamily = FontFamily(Font(R.font.sf_pro))
-                    ), modifier = Modifier.padding(16.dp, bottom = 2.dp, top = 24.dp)
-                )
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(
-                            backgroundColor, RoundedCornerShape(28.dp)
-                        )
-                        .padding(vertical = 4.dp)
-                ) {
-                    StyledToggle(
-                        label = stringResource(R.string.takeover_idle),
-                        description = stringResource(R.string.takeover_idle_desc),
-                        checked = state.takeoverWhenIdle,
-                        onCheckedChange = viewModel::setTakeoverWhenIdle,
-                        independent = false,
-                        enabled = state.isPremium
-                    )
-                    HorizontalDivider(
-                        thickness = 1.dp,
-                        color = Color(0x40888888),
-                        modifier = Modifier.padding(horizontal = 12.dp)
-                    )
-
-                    StyledToggle(
-                        label = stringResource(R.string.takeover_music),
-                        description = stringResource(R.string.takeover_music_desc),
-                        checked = state.takeoverWhenMusic,
-                        onCheckedChange = viewModel::setTakeoverWhenMusic,
-                        independent = false,
-                        enabled = state.isPremium
-                    )
-                    HorizontalDivider(
-                        thickness = 1.dp,
-                        color = Color(0x40888888),
-                        modifier = Modifier.padding(horizontal = 12.dp)
-                    )
-
-                    StyledToggle(
-                        label = stringResource(R.string.takeover_call),
-                        description = stringResource(R.string.takeover_call_desc),
-                        checked = state.takeoverWhenCall,
-                        onCheckedChange = viewModel::setTakeoverWhenCall,
-                        independent = false,
-                        enabled = state.isPremium
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Text(
                     text = stringResource(R.string.takeover_phone_state), style = TextStyle(
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,

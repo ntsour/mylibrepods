@@ -83,25 +83,31 @@ the ability to force-disconnect A2DP are **independent capabilities**:
 
 | Tier | AACP (L2CAP socket) | `BLUETOOTH_PRIVILEGED` | Example |
 |---|---|---|---|
-| **Full** | ✓ Xposed + `l2c_fcr_hook` | ✓ Rooted or system app | Rooted Pixel |
-| **AACP-only** | ✓ Xposed + `l2c_fcr_hook` | ✗ Not rooted | Pixel w/ LSPosed, no root |
+| **Full** | ✓ | ✓ Rooted or system app | Rooted Pixel |
+| **AACP-only** | ✓ | ✗ Not rooted | Pixel 10 (Android 16 QPR3+) |
 | **Limited** | ✗ | ✗ | Non-rooted Xiaomi |
 
-**AACP** (the L2CAP socket to the AirPods) requires Xposed and an unlocked
-bootloader, but not root. It gives ownership callbacks and the ability to send
-`OWNS_CONNECTION` control commands to the AirPods.
+**AACP** (the L2CAP socket to the AirPods) gives ownership callbacks and the
+ability to send `OWNS_CONNECTION` control commands to the AirPods. On
+**Android 16 QPR3+** (Pixel devices with the latest Google Play system update)
+and **ColorOS/OxygenOS 16**, the underlying Bluetooth stack bug that required
+an Xposed hook (`l2c_fcr_hook`) to open this socket was fixed — AACP works
+natively without root or Xposed. On older Android versions it still requires
+Xposed + an unlocked bootloader. The fix is expected to land for all devices
+in Android 17.
 
 **`BLUETOOTH_PRIVILEGED`** requires root or system-app installation. It unlocks
 `BluetoothA2dp.disconnect()` and the privileged form of `BluetoothA2dp.connect()`.
 Without it, calling `connect()` still works on most OEM stacks (see below).
 
-**In practice, the Pixel in this project is "AACP-only"** — confirmed by this
+**In practice, the Pixel 10 in this project is "AACP-only"** — confirmed by this
 log line from `disconnectForCD()` during a real handover:
 ```
 W/AirPodsService: disconnectForCD: no BLUETOOTH_PRIVILEGED, skipping A2DP disconnect
 ```
 The Pixel cannot actively force its A2DP link off. It relies on the destination's
-`connect()` displacing it, which the AirPods handle automatically.
+`connect()` displacing it, which the AirPods handle automatically. AACP itself
+works natively on this device (Android 16 QPR3) without Xposed.
 
 ---
 
@@ -175,9 +181,9 @@ Defined in `CrossDevice.kt` as `CrossDevicePackets`:
 | `AIRPODS_DISCONNECTED` | `00 01 00 00` | "I lost the AirPods" |
 | `REQUEST_DISCONNECT` | `00 02 00 00` | "Release the AirPods — I am taking over" |
 | `REQUEST_CONNECTION_STATUS` | `00 02 00 03` | Keep-alive ping (every 20 s) |
-| `REQUEST_TAKEOVER` | `00 02 00 05` | Courtesy verdict request: "I want to take over — any objection?" |
-| `COURTESY_GRANT` | `00 06 00 00` | "No objection" (I don't hold the pods, or my toggle allows it) |
-| `COURTESY_DENY` | `00 06 00 01` | "I hold the pods and my toggle forbids interruption in my current state" |
+| `REQUEST_TAKEOVER` | `00 02 00 05` | Legacy: courtesy verdict request (removed — always replied with GRANT) |
+| `COURTESY_GRANT` | `00 06 00 00` | Legacy: "no objection" reply (veto mechanism removed) |
+| `COURTESY_DENY` | `00 06 00 01` | Legacy: "denied" reply (ignored — veto mechanism removed) |
 
 Packets are broadcast to all connected sockets (`CrossDevice.sendRemotePacket`) **and**
 forwarded on the client socket (`CrossDeviceClient.send`) so both roles receive them.
@@ -212,39 +218,29 @@ the pods" — `CrossDevice` no longer flips `isAvailable=false` when its RFCOMM 
 socket drops (Doze/OEM-kill routinely drop that idle link). Ownership only changes
 on an explicit `AIRPODS_DISCONNECTED` packet or our own intentful takeover.
 
-### Courtesy Filter — Holder-Authoritative Takeover Veto
+### Requester Always Wins — No Veto
 
-The "Allow your AirPods to move to another device when: Idle / Playing media / On
-call" toggles let the **holder** veto an incoming takeover based on what it's doing.
+Every takeover trigger is an explicit user action (media playback started here,
+call answered/started here, incoming call ringing here). Because the user has
+already "voted with their feet" by initiating audio on the requesting device, the
+holder's consent is not needed — blocking the handover would mean ignoring what
+the user just did.
 
-Flow (requester = the device running `takeOver`):
+**The veto mechanism has been removed.** The `REQUEST_TAKEOVER` / `COURTESY_GRANT`
+/ `COURTESY_DENY` round-trip no longer runs; `takeOver()` proceeds directly to
+`REQUEST_DISCONNECT` + `connectAudio()`. The packet opcodes are retained in the
+protocol for backwards compatibility with older builds: any `REQUEST_TAKEOVER`
+received is still answered with `COURTESY_GRANT`, and `COURTESY_DENY` is silently
+ignored.
 
-1. If a peer is connected and this device does **not** already hold A2DP, the
-   requester broadcasts `REQUEST_TAKEOVER` to all peers and clears the
-   `peerDeniedTakeover` latch.
-2. Each peer replies via `courtesyDeniesTakeover()`:
-   - Not the holder (`!isA2dpConnectedTo(mac)`) → `COURTESY_GRANT` (no objection).
-   - Holder → `COURTESY_DENY` iff its **own** toggle forbids interruption in its
-     current state: on call (`isInCall || isVoIPCallActive || isCallRinging`) →
-     `!takeoverWhenCall`; else music active → `!takeoverWhenMusic`; else
-     `!takeoverWhenIdle`. State is derived from local signals — **no AACP needed**.
-3. The requester waits up to **250 ms**, latching any inbound `COURTESY_DENY`.
-   - Any DENY → abort the takeover (the holder is busy in a protected state).
-   - No DENY within the window (grants only / offline / older build) → **pull**.
+The holder-state toggles (`takeoverWhenIdle`, `takeoverWhenMusic`,
+`takeoverWhenCall`) have been removed from the UI and are no longer read at
+runtime. `courtesyDeniesTakeover()` is kept as an API stub returning `false`.
 
-**Why holder-authoritative:** the decision depends only on the holder's settings, so
-it's consistent regardless of which device initiates and the two devices' toggles
-need not be in sync. An earlier requester-side version made behaviour directional
-(it depended on the grabbing device's toggles) — that was the "inconsistent when
-settings differ" bug.
-
-**Why a deny *latch* (not a single state value):** only the real holder ever denies;
-every non-holder grants. The requester ORs all replies into one boolean, so any
-single DENY blocks regardless of how many peers reply or in what order. This is
-**N-device safe** even though the rest of the protocol is currently 2-device.
-
-The "Disconnected" case has no holder to object, so a grab of free pods always
-proceeds — which is why that toggle was removed from the UI.
+**The requester's own triggers** (`takeoverWhenMediaStart`, `takeoverWhenRingingCall`)
+remain as a user-facing option: they control whether *this device* will initiate a
+handover at all when media starts or a call rings. Those are "do I want handover
+on this device?" toggles, not holder veto toggles.
 
 ### Handover Scenarios
 
@@ -590,8 +586,6 @@ target audience for this app.
    peer to keep this safe. 3+ devices are not supported — see
    `docs/multi-peer-cross-device-plan.md` for the deferred N-peer design.
 
-8. **Courtesy veto needs peer support.** The holder-authoritative veto relies on the
-   peer answering `REQUEST_TAKEOVER`. A peer on an older build (or the Windows app,
-   which doesn't implement it yet) never replies, so the requester's 250 ms window
-   times out and it pulls anyway. Fail-open by design — a missing reply must not
-   block a deliberate takeover.
+8. ~~**Courtesy veto needs peer support.**~~ Veto mechanism removed. Requester always
+   wins; `REQUEST_TAKEOVER` / `COURTESY_DENY` round-trip no longer runs. See
+   "Requester Always Wins" section above.

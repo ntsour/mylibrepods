@@ -1132,10 +1132,8 @@ private fun AudioContent(
             ConnectionSettings(
                 crossDeviceEnabled = state.crossDeviceEnabled,
                 onCrossDeviceChanged = { viewModel.setCrossDeviceEnabled(it) },
-                crossDevicePeerMac = state.crossDevicePeerMac,
-                onPeerMacChanged = { viewModel.setCrossDevicePeerMac(it) },
-                crossDevicePeerConnected = state.crossDevicePeerConnected,
-                onReconnectCrossDevice = { viewModel.reconnectCrossDevice() },
+                crossDevicePeers = state.crossDevicePeers,
+                navController = navController,
                 automaticEarDetectionEnabled = state.automaticEarDetectionEnabled,
                 onAutomaticEarDetectionChanged = { viewModel.setAutomaticEarDetectionEnabled(it) },
                 automaticConnectionEnabled = state.automaticConnectionEnabled,
@@ -1173,15 +1171,6 @@ private fun AudioContent(
                     onCheckedChange = appSettingsViewModel::setDisconnectWhenNotWearing,
                     independent = true, enabled = appState.isPremium)
             }
-        }
-        MenuDivider()
-        MenuSectionHeader(stringResource(R.string.takeover_airpods_state), dark)
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
-            StyledToggle(label = stringResource(R.string.takeover_idle), description = stringResource(R.string.takeover_idle_desc), checked = appState.takeoverWhenIdle, onCheckedChange = appSettingsViewModel::setTakeoverWhenIdle, independent = true)
-            Spacer(Modifier.height(4.dp))
-            StyledToggle(label = stringResource(R.string.takeover_music), description = stringResource(R.string.takeover_music_desc), checked = appState.takeoverWhenMusic, onCheckedChange = appSettingsViewModel::setTakeoverWhenMusic, independent = true)
-            Spacer(Modifier.height(4.dp))
-            StyledToggle(label = stringResource(R.string.takeover_call), description = stringResource(R.string.takeover_call_desc), checked = appState.takeoverWhenCall, onCheckedChange = appSettingsViewModel::setTakeoverWhenCall, independent = true)
         }
         MenuDivider()
         MenuSectionHeader(stringResource(R.string.takeover_phone_state), dark)

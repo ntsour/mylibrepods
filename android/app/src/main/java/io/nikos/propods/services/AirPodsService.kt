@@ -1055,8 +1055,18 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
 
         val bluetoothAdapter = getSystemService(BluetoothManager::class.java).adapter
 
-        bluetoothAdapter.bondedDevices.forEach { device ->
-            device.fetchUuidsWithSdp()
+        // Phase 3 fix: don't probe UUIDs at startup in shared mode. If another peer
+        // is configured, calling fetchUuidsWithSdp() on the AirPods will page them
+        // even if we don't immediately connect — and if the peer holds them, that
+        // pages them away from the holder, disrupting their connection. In shared
+        // mode, BLE discovery (constant, in background) and user intent (play button)
+        // are sufficient; no proactive SDP needed. In standalone mode or when no
+        // peers are configured, normal SDP/UUID discovery is safe.
+        val inSharedMode = CrossDevice.isEnabled && CrossDevice.configuredPeers.isNotEmpty()
+        if (!inSharedMode) {
+            bluetoothAdapter.bondedDevices.forEach { device ->
+                Log.d(TAG, "<LogCollector:Conn> Startup: calling fetchUuidsWithSdp() for ${device.address} (not in shared mode)")
+                device.fetchUuidsWithSdp()
             if (device.uuids != null) {
                 if (device.uuids.contains(ParcelUuid.fromString("74ec2172-0bad-4d01-8f77-997b2be0722a"))) {
                     bluetoothAdapter.getProfileProxy(
@@ -1090,7 +1100,8 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                     )
                 }
             }
-        }
+            }  // close forEach
+        }  // close if (!inSharedMode)
 
 //        if (!isConnectedLocally && !CrossDevice.isAvailable) {
 //            clearPacketLogs()
@@ -3034,7 +3045,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
     private fun resToUri(resId: Int): Uri? {
         return try {
             Uri.Builder().scheme(ContentResolver.SCHEME_ANDROID_RESOURCE)
-                .authority("io.nikos.propods")
+                .authority(applicationContext.packageName)
                 .appendPath(applicationContext.resources.getResourceTypeName(resId))
                 .appendPath(applicationContext.resources.getResourceEntryName(resId)).build()
         } catch (_: Resources.NotFoundException) {
@@ -3227,12 +3238,10 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
             if (bluetoothDevice != null && !action.isNullOrEmpty()) {
                 Log.d(TAG, "Received bluetooth connection broadcast: action=$action, device=${bluetoothDevice.address}")
                 if (BluetoothDevice.ACTION_ACL_CONNECTED == action) {
-                    // If this is our CrossDevice peer, kick the RFCOMM client immediately
-                    // instead of waiting for the exponential backoff timer to expire.
-                    val peerMac = context?.getSharedPreferences("settings", MODE_PRIVATE)
-                        ?.getString("cross_device_peer_mac", null)
-                    if (peerMac != null && bluetoothDevice.address == peerMac) {
-                        CrossDeviceClient.retryNow()
+                    // If this is a configured CrossDevice peer, kick the RFCOMM client
+                    // for that peer immediately instead of waiting out the backoff timer.
+                    if (CrossDevice.configuredPeers.any { it.equals(bluetoothDevice.address, ignoreCase = true) }) {
+                        CrossDeviceClient.retryNow(bluetoothDevice.address)
                     }
 
                     val uuid = ParcelUuid.fromString("74ec2172-0bad-4d01-8f77-997b2be0722a")
@@ -3599,24 +3608,6 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
             }
         }
 
-        // Courtesy filter ("Connect when your AirPods' status is…"), holder-authoritative.
-        // If a peer currently holds the AirPods, ask all peers for a verdict; the holder
-        // denies if ITS OWN toggle forbids interruption in its current state. We latch any
-        // single DENY (N-device safe). This can only SUPPRESS an intent-driven takeover,
-        // never trigger one. No reply within the window (offline / older build) → pull.
-        if (CrossDevice.isPeerConnected && !isA2dpConnectedTo(macAddress)) {
-            CrossDevice.requestTakeoverVerdict()
-            var waited = 0
-            while (!CrossDevice.peerDeniedTakeover && waited < 250) {
-                Thread.sleep(25); waited += 25
-            }
-            if (CrossDevice.peerDeniedTakeover) {
-                Log.d(TAG, "takeOver: courtesy filter — holder denied (busy in a protected state); not interrupting")
-                return
-            }
-            Log.d(TAG, "takeOver: courtesy filter — no deny within window, proceeding")
-        }
-
         Log.d(TAG, "takeOver START: macAddress=$macAddress, taking over for $takingOverFor")
         val bluetoothManager = getSystemService(BluetoothManager::class.java)
         val bluetoothAdapter = bluetoothManager.adapter
@@ -3632,9 +3623,9 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                 // never learns it should pause and drop — our connect() silently
                 // no-ops on limited-mode devices that can't force a takeover.
                 if (CrossDevice.isPeerConnected) {
-                    Log.d(TAG, "takeOver: sending REQUEST_DISCONNECT to peer")
+                    Log.d(TAG, "takeOver: broadcasting REQUEST_DISCONNECT to peers")
                     CrossDevice.sendRemotePacket(CrossDevicePackets.REQUEST_DISCONNECT.packet)
-                    CrossDeviceClient.send(CrossDevicePackets.REQUEST_DISCONNECT.packet)
+                    CrossDeviceClient.sendAll(CrossDevicePackets.REQUEST_DISCONNECT.packet)
                 }
 
                 Log.d(TAG, "takeOver: calling connectAudio()")
@@ -4664,6 +4655,17 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
     fun isA2dpConnected(): Boolean = isA2dpConnectedTo(macAddress)
 
     /**
+     * True when THIS device currently holds the AirPods by ANY means — the AACP
+     * L2CAP socket (full/AACP devices) OR the standard A2DP audio link (limited-mode
+     * devices that never open AACP). Used by the cross-device ownership-reporting
+     * path (status replies + connect announcements) so a limited-mode holder
+     * correctly tells peers it has the pods. `isConnected()` alone is AACP-only and
+     * reports false on limited devices even while they hold the audio link — which
+     * made peers wrongly drop a limited holder from their `holders` set.
+     */
+    fun holdsAirPods(): Boolean = isConnected() || isA2dpConnected()
+
+    /**
      * Handover policy gate for PASSIVE, event-driven connect attempts (BLE
      * availability tick, battery case-open, ear-in). Returns true only when a
      * proactive grab is permitted:
@@ -4677,28 +4679,20 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
      * which bypass this gate.
      */
     private fun mayProactivelyConnect(): Boolean {
-        val peer = sharedPreferences.getString("cross_device_peer_mac", "") ?: ""
-        val shared = CrossDevice.isEnabled && peer.isNotEmpty()
-        return !shared || isA2dpConnectedTo(macAddress)
+        val shared = CrossDevice.isEnabled && CrossDevice.configuredPeers.isNotEmpty()
+        val result = !shared || isA2dpConnectedTo(macAddress)
+        Log.d(TAG, "<LogCollector:Conn> mayProactivelyConnect: isEnabled=${CrossDevice.isEnabled} configuredPeers=${CrossDevice.configuredPeers} shared=$shared a2dpOurs=${isA2dpConnectedTo(macAddress)} result=$result")
+        return result
     }
 
     /**
-     * Holder-authoritative courtesy verdict. Returns true = DENY an incoming
-     * takeover, i.e. WE currently hold the AirPods and our own "Connect when your
-     * AirPods' status is…" toggle forbids interruption in our current state.
-     * A non-holder never objects. Derived from purely local signals — no AACP —
-     * so it works on limited-mode devices too. Because only the real holder can
-     * deny and the requester latches any single deny, this is N-device safe.
+     * Always returns false — the courtesy veto mechanism has been removed.
+     * Requester always wins: every takeover trigger is an explicit user action
+     * (media-start or call), so the requester's intent is unambiguous and the
+     * holder should always yield. Kept as a stub so any legacy call-sites (Windows
+     * app, older peer builds) don't break at compile time.
      */
-    fun courtesyDeniesTakeover(): Boolean {
-        if (!isA2dpConnectedTo(macAddress)) return false // not the holder → no objection
-        val am = getSystemService(AUDIO_SERVICE) as AudioManager
-        return when {
-            isInCall || isVoIPCallActive || isCallRinging -> !config.takeoverWhenCall
-            am.isMusicActive -> !config.takeoverWhenMusic
-            else -> !config.takeoverWhenIdle
-        }
-    }
+    fun courtesyDeniesTakeover(): Boolean = false
 }
 
 private fun Int.dpToPx(): Int {

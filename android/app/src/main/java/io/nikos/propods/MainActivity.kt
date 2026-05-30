@@ -164,6 +164,7 @@ import io.nikos.propods.presentation.screens.ConversationAwarenessScreen
 import io.nikos.propods.presentation.screens.BluetoothControlScreen
 import io.nikos.propods.presentation.screens.AudioSettingsScreen
 import io.nikos.propods.presentation.screens.ConnectionSettingsScreen
+import io.nikos.propods.presentation.screens.PairedDevicesScreen
 import io.nikos.propods.presentation.screens.MicrophoneSettingsScreen
 import io.nikos.propods.presentation.screens.ListeningModeConfigScreen
 import io.nikos.propods.presentation.screens.SmartAutomationScreen
@@ -465,7 +466,10 @@ fun Main() {
                         if (airPodsViewModel != null) AudioSettingsScreen(airPodsViewModel, viewModel(), navController)
                     }
                     composable("connection_settings") {
-                        if (airPodsViewModel != null) ConnectionSettingsScreen(airPodsViewModel)
+                        if (airPodsViewModel != null) ConnectionSettingsScreen(airPodsViewModel, navController)
+                    }
+                    composable("paired_devices") {
+                        if (airPodsViewModel != null) PairedDevicesScreen(airPodsViewModel, navController)
                     }
                     composable("microphone_settings") {
                         if (airPodsViewModel != null) MicrophoneSettingsScreen(airPodsViewModel)

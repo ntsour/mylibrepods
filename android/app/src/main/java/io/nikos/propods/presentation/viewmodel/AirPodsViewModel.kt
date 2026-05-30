@@ -53,6 +53,14 @@ import io.nikos.propods.services.AirPodsService
 import io.nikos.propods.utils.CrossDevice
 import io.nikos.propods.utils.CrossDeviceClient
 
+/** Per-peer status exposed to the UI. Built each poll tick from CrossDevice state. */
+data class PeerUiInfo(
+    val mac: String,
+    val name: String,
+    val connected: Boolean,
+    val hasPods: Boolean,
+)
+
 @Suppress("ArrayInDataClass")
 data class AirPodsUiState(
     val deviceName: String,
@@ -85,8 +93,7 @@ data class AirPodsUiState(
     val automaticEarDetectionEnabled: Boolean = true,
     val automaticConnectionEnabled: Boolean = true,
     val crossDeviceEnabled: Boolean = false,
-    val crossDevicePeerMac: String? = null,
-    val crossDevicePeerConnected: Boolean = false,
+    val crossDevicePeers: List<PeerUiInfo> = emptyList(),
 
     val leftAction: StemAction = StemAction.CYCLE_NOISE_CONTROL_MODES,
     val rightAction: StemAction = StemAction.CYCLE_NOISE_CONTROL_MODES,
@@ -412,19 +419,23 @@ class AirPodsViewModel(
         }
     }
 
+    private fun readFirstConfiguredPeer(prefs: android.content.SharedPreferences): String? {
+        val json = prefs.getString("cross_device_peers", null)
+        if (json != null) {
+            val arr = org.json.JSONArray(json)
+            if (arr.length() > 0) return arr.getString(0)
+        }
+        return prefs.getString("cross_device_peer_mac", null)
+    }
+
     private fun loadSharedPreferences() {
         val offListeningModeEnabled = sharedPreferences.getBoolean("off_listening_mode", true)
         val automaticEarDetectionEnabled =
             sharedPreferences.getBoolean("automatic_ear_detection", true)
         val automaticConnectionEnabled =
             sharedPreferences.getBoolean("automatic_connection_ctrl_cmd", true)
-        val crossDevicePeerMac =
-            sharedPreferences.getString("cross_device_peer_mac", null)
-        // CrossDevice.init() handles auto-enabling when peerMac is set and the pref
-        // was never written — by the time the ViewModel loads, that pref is already
-        // persisted, so we can read it directly here.
         val crossDeviceEnabled =
-            sharedPreferences.getBoolean("cross_device_enabled", crossDevicePeerMac != null)
+            sharedPreferences.getBoolean("cross_device_enabled", CrossDevice.configuredPeers.isNotEmpty())
         val headGesturesEnabled = sharedPreferences.getBoolean("head_gestures_enabled", false)
         val headGesturesAnswerCall = sharedPreferences.getBoolean("head_gestures_answer_call", true)
         val headGesturesMuteCall = sharedPreferences.getBoolean("head_gestures_mute_call", true)
@@ -451,7 +462,6 @@ class AirPodsViewModel(
                 automaticEarDetectionEnabled = automaticEarDetectionEnabled,
                 automaticConnectionEnabled = automaticConnectionEnabled,
                 crossDeviceEnabled = crossDeviceEnabled,
-                crossDevicePeerMac = crossDevicePeerMac,
                 headGesturesEnabled = headGesturesEnabled,
                 headGesturesAnswerCall = headGesturesAnswerCall,
                 headGesturesMuteCall = headGesturesMuteCall,
@@ -640,53 +650,87 @@ class AirPodsViewModel(
         _uiState.update { it.copy(crossDeviceEnabled = enabled) }
     }
 
+    /** Add [mac] to the configured peer set and reconcile live links. */
     @android.annotation.SuppressLint("MissingPermission")
-    fun setCrossDevicePeerMac(mac: String) {
-        sharedPreferences.edit { putString("cross_device_peer_mac", mac) }
-        _uiState.update { it.copy(crossDevicePeerMac = mac) }
-        if (CrossDevice.isEnabled) {
-            // Re-run init so role election decides whether to start the client
-            // (lower-MAC side) or stay server-only (higher-MAC side).
-            CrossDeviceClient.stop()
+    fun addCrossDevicePeer(mac: String) {
+        val current = CrossDevice.configuredPeers.toMutableSet()
+        if (current.add(mac)) {
+            sharedPreferences.edit {
+                putString("cross_device_peers", org.json.JSONArray(current.toList()).toString())
+                remove("cross_device_peer_mac")
+            }
             CrossDevice.init(appContext)
         }
     }
 
+    /** Remove [mac] from the configured peer set and tear down its RFCOMM link. */
+    fun removeCrossDevicePeer(mac: String) {
+        val current = CrossDevice.configuredPeers.toMutableSet()
+        if (current.remove(mac)) {
+            sharedPreferences.edit {
+                putString("cross_device_peers", org.json.JSONArray(current.toList()).toString())
+            }
+            CrossDeviceClient.stop(mac)
+            CrossDevice.configuredPeers = current
+        }
+    }
+
+    /** Cancel the backoff delay for [mac] and retry its RFCOMM connect immediately. */
+    fun reconnectCrossDevicePeer(mac: String) {
+        CrossDeviceClient.retryNow(mac)
+    }
+
+    /** Legacy single-peer setter — kept for callers that haven't been updated yet. */
+    @android.annotation.SuppressLint("MissingPermission")
+    fun setCrossDevicePeerMac(mac: String) {
+        sharedPreferences.edit {
+            putString("cross_device_peers", org.json.JSONArray(listOf(mac)).toString())
+            remove("cross_device_peer_mac")
+        }
+        CrossDeviceClient.stop()
+        CrossDevice.init(appContext)
+    }
+
     @android.annotation.SuppressLint("MissingPermission")
     fun reconnectCrossDevice() {
-        val mac = _uiState.value.crossDevicePeerMac ?: return
-        android.util.Log.d("AirPodsViewModel", "reconnectCrossDevice tapped — cycling server + client (peer=$mac)")
-        // Stop the client first so we don't race against the server tear-down.
+        android.util.Log.d("AirPodsViewModel", "reconnectCrossDevice — cycling server + client")
         CrossDeviceClient.stop()
-        // Cycle the server so a wedged accept() loop on this side can recover.
         CrossDevice.restartServer(appContext)
-        // Re-run role election: only the lower-MAC side actually starts the
-        // client, so we avoid the duplicate-channel collision that was killing
-        // the older RFCOMM session.
         CrossDevice.init(appContext)
+    }
+
+    @android.annotation.SuppressLint("MissingPermission")
+    private fun buildPeerList(): List<PeerUiInfo> {
+        val adapter = runCatching {
+            val bt = appContext.getSystemService(android.bluetooth.BluetoothManager::class.java)
+            bt?.adapter
+        }.getOrNull() ?: return emptyList()
+        return CrossDevice.configuredPeers.map { mac ->
+            val name = runCatching { adapter.getRemoteDevice(mac).name }.getOrNull() ?: mac
+            PeerUiInfo(
+                mac = mac,
+                name = name,
+                connected = CrossDevice.isConnectedTo(mac),
+                hasPods = CrossDevice.holders.contains(mac),
+            )
+        }
     }
 
     private fun pollCrossDeviceStatus() {
         android.util.Log.d("AirPodsViewModel", "pollCrossDeviceStatus started (scope=$viewModelScope)")
         viewModelScope.launch {
-            var lastLoggedState: Boolean? = null
             var tick = 0
             while (true) {
-                val serverConnected = CrossDevice.isServerClientConnected
-                val clientConnected = io.nikos.propods.utils.CrossDeviceClient.isConnected
-                val combined = serverConnected || clientConnected
-                if (combined != lastLoggedState || tick % 10 == 0) {
-                    android.util.Log.d(
-                        "AirPodsViewModel",
-                        "pollCrossDeviceStatus tick=$tick serverConn=$serverConnected clientConn=$clientConnected combined=$combined"
-                    )
-                    lastLoggedState = combined
-                }
+                val peers = buildPeerList()
                 // Also refresh the standard-Bluetooth (A2DP) connection flag here so
                 // the UI reflects it on AACP-less devices without needing a broadcast.
                 val a2dp = if (isDemoMode) _uiState.value.isA2dpConnected
                            else runCatching { service.isA2dpConnected() }.getOrDefault(false)
-                _uiState.update { it.copy(crossDevicePeerConnected = combined, isA2dpConnected = a2dp) }
+                if (tick % 10 == 0) {
+                    android.util.Log.d("AirPodsViewModel",
+                        "pollCrossDeviceStatus tick=$tick peers=${peers.map { "${it.name}:connected=${it.connected}:hasPods=${it.hasPods}" }}")
+                }
+                _uiState.update { it.copy(crossDevicePeers = peers, isA2dpConnected = a2dp) }
                 tick++
                 delay(2000)
             }
