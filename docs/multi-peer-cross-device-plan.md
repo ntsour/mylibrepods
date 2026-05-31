@@ -1,9 +1,22 @@
-# Multi-peer cross-device handover — design plan (deferred)
+# Multi-peer cross-device handover — design + implementation record
 
-Status: **not implemented.** This captures the design and the complete inventory
-of single-peer assumptions so the work can be resumed in a future session. The
-current code supports a robust **2-device** setup only (the server is restricted
-to the single configured peer; see `CrossDevice.configuredPeerMac`).
+Status: **IMPLEMENTED and merged to `main` (Android).** Phases 1–4 are complete:
+multi-peer data layer (`holders` set + `configuredPeers`), multi-socket transport
+(`CrossDeviceClient` is a `ConcurrentHashMap<mac, PeerLink>`), per-pair role
+election, requester-always-wins handover (courtesy veto removed), the startup
+SDP-page fix, and the "Connected devices" multi-peer UI (`PairedDevicesScreen`).
+Validated on real 3-device hardware (Pixel + Samsung + Xiaomi). 24 unit tests green.
+
+The Android app is **multi-peer now** — it is no longer single-peer/2-device.
+
+**Remaining work is Windows-only** — see `docs/windows-multipeer.md`. (The Windows
+tray client is already multi-peer in transport/storage/UI; the one pending change
+is dropping its holder-side call veto for full symmetry.)
+
+The sections below are kept as the historical design record and single-peer
+breaking-point inventory that guided the implementation. Where a section reads as
+future-tense ("will…", "→ needs…"), treat it as the original plan; the
+per-phase "implemented" notes further down reflect what actually shipped.
 
 ## Why / value
 
