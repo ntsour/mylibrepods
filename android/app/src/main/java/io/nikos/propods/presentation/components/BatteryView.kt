@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Text
@@ -68,6 +69,14 @@ fun BatteryView(
     val hintColor = if (isDark) Color.White.copy(alpha = 0.45f) else Color.Black.copy(alpha = 0.4f)
     val sfPro = FontFamily(Font(R.font.sf_pro))
 
+    // The hero images fill their column width; on a phone in landscape the column
+    // is wide and short, so an unbounded image grows tall enough to push every
+    // control off-screen. Cap the image height when the viewport is short (phone
+    // landscape ~411dp). Tablets (≥ 480dp tall) keep the larger image.
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val isShortViewport = configuration.screenHeightDp < 480
+    val imageMaxHeight = if (isShortViewport) 96.dp else 200.dp
+
     // A bud is "known" when its status is not DISCONNECTED (or null)
     val leftKnown  = left  != null && left.status  != BatteryStatus.DISCONNECTED
     val rightKnown = right != null && right.status != BatteryStatus.DISCONNECTED
@@ -95,6 +104,7 @@ fun BatteryView(
                     contentDescription = stringResource(R.string.buds),
                     modifier = Modifier
                         .fillMaxWidth()
+                        .heightIn(max = imageMaxHeight)
                         .padding(8.dp)
                 )
 
@@ -148,6 +158,7 @@ fun BatteryView(
                     contentDescription = stringResource(R.string.case_alt),
                     modifier = Modifier
                         .fillMaxWidth()
+                        .heightIn(max = imageMaxHeight)
                         .padding(8.dp)
                 )
 

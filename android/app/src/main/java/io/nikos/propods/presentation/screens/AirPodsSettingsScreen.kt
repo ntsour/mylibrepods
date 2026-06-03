@@ -46,6 +46,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -606,14 +608,21 @@ private fun ConnectedScreen(
     val context      = LocalContext.current
     val capabilities = state.capabilities
 
-    // Weight-based layout: top content takes natural height, tile grid fills the rest.
-    // This guarantees all 6 tiles are always visible without scrolling.
+    // Tall viewports (portrait phones, tablets either orientation): weight-based
+    // layout — top content takes natural height, the tile grid fills the rest, so
+    // all 6 tiles are visible without scrolling.
+    // Short viewports (phone landscape ~411dp): the weight-based layout collapses
+    // the tile grid and pushes controls off-screen. Switch to a scrollable column
+    // with a fixed-height tile grid so everything is reachable.
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val isShortViewport = configuration.screenHeightDp < 480
     Column(
         modifier = Modifier
             .fillMaxSize()
             .hazeSource(hazeState)
             .padding(horizontal = 16.dp)
             .padding(top = topPadding, bottom = bottomPadding)
+            .then(if (isShortViewport) Modifier.verticalScroll(rememberScrollState()) else Modifier)
             .then(if (blockTouches) Modifier.pointerInput(Unit) {
                 awaitPointerEventScope { while (true) { val e = awaitPointerEvent(PointerEventPass.Initial); e.changes.forEach { it.consume() } } }
             } else Modifier),
@@ -701,9 +710,12 @@ private fun ConnectedScreen(
 
         Spacer(Modifier.height(8.dp))
 
-        // ── Tile grid fills all remaining vertical space ──────────────────
+        // ── Tile grid ─────────────────────────────────────────────────────
+        // Tall viewports: fill remaining space via weight. Short viewports: weight
+        // is illegal inside a vertical scroll and would also collapse, so use a
+        // fixed height tall enough for the three rows.
         CategoryTileGrid(
-            modifier = Modifier.weight(1f),
+            modifier = if (isShortViewport) Modifier.fillMaxWidth().height(240.dp) else Modifier.weight(1f),
             navController = navController,
             dark = dark
         )
