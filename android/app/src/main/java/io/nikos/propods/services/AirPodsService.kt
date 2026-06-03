@@ -3642,13 +3642,17 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                 // reflection call can silently no-op — so a single 1s retry often
                 // misses the window, forcing the user to press play twice. Retry at
                 // 1s / 2.5s / 4.5s and stop as soon as the route lands. Each retry
-                // is a no-op once A2DP is connected, so this never bounces a live
-                // route on devices where the first attempt already succeeded.
+                // is a no-op once A2DP is connected or connecting — skipping while
+                // STATE_CONNECTING prevents each retry from perturbing an in-progress
+                // negotiation (which caused play/stop bouncing on MIUI).
                 val retryDevice = device
                 for (retryDelay in TAKEOVER_RETRY_DELAYS_MS) {
                     Handler(Looper.getMainLooper()).postDelayed({
-                        if (bluetoothA2dpProxy?.connectedDevices?.any { it.address == macAddress } == true) {
-                            Log.d(TAG, "takeOver: retry skipped — A2DP already connected")
+                        val a2dpState = retryDevice?.let { d ->
+                            try { bluetoothA2dpProxy?.getConnectionState(d) } catch (_: Exception) { null }
+                        }
+                        if (a2dpState == BluetoothProfile.STATE_CONNECTED || a2dpState == BluetoothProfile.STATE_CONNECTING) {
+                            Log.d(TAG, "takeOver: retry skipped — A2DP state=$a2dpState")
                             return@postDelayed
                         }
                         Log.d(TAG, "takeOver: retry connectAudio() after ${retryDelay}ms")
@@ -4277,7 +4281,6 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
 
             override fun onServiceDisconnected(profile: Int) {}
         }, BluetoothProfile.A2DP)
-        CrossDevice.isAvailable = true
         CrossDevice.notifyDisconnected()
     }
 
@@ -4436,12 +4439,13 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                     // handler — and was the cause of "playback pauses right when the
                     // connection popup appears".
                     val alreadyConnected = try {
-                        proxy.getConnectionState(device) == BluetoothProfile.STATE_CONNECTED
+                        val s = proxy.getConnectionState(device)
+                        s == BluetoothProfile.STATE_CONNECTED || s == BluetoothProfile.STATE_CONNECTING
                     } catch (e: Exception) {
                         false
                     }
                     if (alreadyConnected) {
-                        Log.d(TAG, "connectAudio: A2DP already connected to ${device?.address} — skipping redundant connect()")
+                        Log.d(TAG, "connectAudio: A2DP already connected/connecting to ${device?.address} — skipping redundant connect()")
                         bluetoothAdapter.closeProfileProxy(BluetoothProfile.A2DP, proxy)
                         return
                     }
@@ -4582,7 +4586,6 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         } catch (e: Exception) {
             e.printStackTrace()
         }
-        CrossDevice.isAvailable = true
         CrossDevice.close()
         super.onDestroy()
     }

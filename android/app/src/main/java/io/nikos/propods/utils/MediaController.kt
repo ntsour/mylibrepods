@@ -589,9 +589,11 @@ object MediaController {
 
             // Track the most recent moment music was observed active. The gates
             // above used the PREVIOUS value of this; update it now for future
-            // callbacks. Compare against `now` not isActive snapshot — this
-            // bookkeeping must happen on every callback while music plays.
-            if (isActive) lastMusicActiveAt = now
+            // callbacks. Require hasNewMusicOrMovie so that HyperOS's quirky
+            // first-pass callback (isActive=true, configs=[]) doesn't stamp a
+            // stale timestamp that then causes the real media callback ~665ms
+            // later to be suppressed as a "transient dip".
+            if (isActive && hasNewMusicOrMovie) lastMusicActiveAt = now
         }
     }
 

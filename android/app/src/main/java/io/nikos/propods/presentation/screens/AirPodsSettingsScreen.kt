@@ -721,7 +721,14 @@ private fun CategoryTileGrid(
 
     // Scale tile typography + iconography based on screen width.
     // Reference: phone is ~360–420 dp wide; tablet is ≥ 600 dp; large tablet ≥ 840 dp.
-    val screenWidthDp = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val screenWidthDp = configuration.screenWidthDp
+    val screenHeightDp = configuration.screenHeightDp
+    // In landscape the three tile rows share a short height, so a width-derived
+    // emoji (44sp) overflows and clips. The per-tile emoji size is additionally
+    // capped to the actual tile height via BoxWithConstraints below; this is just
+    // the upper bound.
+    val isLandscape = screenWidthDp > screenHeightDp
     val emojiFontSize = when {
         screenWidthDp >= 840 -> 44.sp
         screenWidthDp >= 600 -> 36.sp
@@ -739,7 +746,13 @@ private fun CategoryTileGrid(
     }
     val tileCorner = if (screenWidthDp >= 600) 24.dp else 18.dp
     val tilePadH   = if (screenWidthDp >= 600) 20.dp else 12.dp
-    val tilePadV   = if (screenWidthDp >= 600) 16.dp else 10.dp
+    // Landscape tiles are vertically compressed — trim vertical padding so the
+    // icon + label have room and the emoji doesn't get clipped.
+    val tilePadV   = when {
+        isLandscape          -> 6.dp
+        screenWidthDp >= 600 -> 16.dp
+        else                 -> 10.dp
+    }
     val rowSpacing = if (screenWidthDp >= 600) 12.dp else 8.dp
 
     val tiles = listOf(
@@ -773,24 +786,32 @@ private fun CategoryTileGrid(
                             .padding(horizontal = tilePadH, vertical = tilePadV),
                         contentAlignment = Alignment.CenterStart
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxSize(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                emoji,
-                                modifier = Modifier.width(emojiSlotWidth),
-                                style = TextStyle(fontSize = emojiFontSize, fontFamily = SfPro)
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxHeight(),
-                                contentAlignment = Alignment.Center
+                        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+                            // Cap the emoji to the available tile height. An emoji
+                            // glyph's line box is ~1.3× its font size, so to fit it
+                            // vertically we keep fontSize ≤ height / 1.3 (≈ ×0.76).
+                            // Use the width breakpoint value as the upper bound.
+                            val heightCapSp = maxHeight.value * 0.72f
+                            val effectiveEmojiSp = minOf(emojiFontSize.value, heightCapSp).sp
+                            Row(
+                                modifier = Modifier.fillMaxSize(),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(label, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
-                                style = TextStyle(fontSize = labelFontSize, fontWeight = FontWeight.Medium,
-                                fontFamily = SfPro, color = textColor))
+                                Text(
+                                    emoji,
+                                    modifier = Modifier.width(emojiSlotWidth),
+                                    style = TextStyle(fontSize = effectiveEmojiSp, fontFamily = SfPro)
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(label, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
+                                    style = TextStyle(fontSize = labelFontSize, fontWeight = FontWeight.Medium,
+                                    fontFamily = SfPro, color = textColor))
+                                }
                             }
                         }
                     }

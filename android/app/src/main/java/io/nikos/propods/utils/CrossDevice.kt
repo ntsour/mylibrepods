@@ -78,13 +78,12 @@ object CrossDevice {
         internal set
 
     /** Which peer MACs currently hold the AirPods. `isAvailable` is a computed
-     *  view of this set. Phase 2 will attribute each entry to the exact source MAC;
-     *  Phase 1 uses the full configured peer set as a proxy. */
+     *  view of this set. Each entry is attributed to the exact source MAC that sent
+     *  REQUEST_HANDOVER / REQUEST_DISCONNECT / AIRPODS_CONNECTED / AIRPODS_DATA. */
     val holders: MutableSet<String> = CopyOnWriteArraySet()
 
     /** True when any peer holds the AirPods (i.e. [holders] is non-empty).
-     *  Setting to true adds all [configuredPeers] to [holders]; setting to false clears it.
-     *  All existing call-sites in AirPodsService continue to work unchanged. */
+     *  Only the setter for false (holders.clear) is used internally now. */
     var isAvailable: Boolean
         get() = holders.isNotEmpty()
         set(value) { if (value) holders.addAll(configuredPeers) else holders.clear() }
@@ -342,7 +341,10 @@ object CrossDevice {
                 ServiceManager.getService()?.disconnectForCD()
             }
             raw.contentEquals(CrossDevicePackets.REQUEST_DISCONNECT.packet) -> {
-                // Mark that a peer is taking over so we apply cooldown appropriately
+                // Mark that a peer is taking over so we apply cooldown appropriately.
+                // Eagerly attribute ownership to this specific peer (mirrors REQUEST_HANDOVER)
+                // so hasPods reflects the real taker, not all configured peers.
+                holders.add(sourceMac)
                 ServiceManager.getService()?.markPeerTakeoverAttempt()
                 ServiceManager.getService()?.disconnectForCD()
             }
